@@ -29,7 +29,7 @@ func newGuideSetupCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := contextFromCommand(cmd)
 			execCtx := cmd.Context()
-			if err := validateGuideConfig(cfg); err != nil {
+			if err := validateGuideConfig(&cfg); err != nil {
 				return writeErr(cmd, ctx.JSON, "guide setup", err)
 			}
 
@@ -40,7 +40,7 @@ func newGuideSetupCmd() *cobra.Command {
 			}
 			defer db.Close()
 
-			if err := storage.UpsertGuideConfig(execCtx, db, cfg); err != nil {
+			if err := storage.UpsertGuideConfig(execCtx, db, &cfg); err != nil {
 				appErr := output.NewError("storage_error", "failed to save guide configuration", map[string]any{"reason": err.Error()})
 				return writeErr(cmd, ctx.JSON, "guide setup", appErr)
 			}
@@ -136,7 +136,7 @@ func newGuideValidateCmd() *cobra.Command {
 				return writeErr(cmd, ctx.JSON, "guide validate", appErr)
 			}
 
-			if err := validateGuideConfig(cfg); err != nil {
+			if err := validateGuideConfig(&cfg); err != nil {
 				return writeErr(cmd, ctx.JSON, "guide validate", err)
 			}
 
@@ -148,7 +148,7 @@ func newGuideValidateCmd() *cobra.Command {
 	}
 }
 
-func validateGuideConfig(cfg storage.GuideConfig) error {
+func validateGuideConfig(cfg *storage.GuideConfig) error {
 	if cfg.LLMProvider == "" {
 		return output.NewError("validation_error", "llm provider is required", map[string]any{"field": "llm-provider"})
 	}
@@ -183,9 +183,13 @@ func writeErr(cmd *cobra.Command, jsonMode bool, command string, err error) erro
 
 	var appErr *output.AppError
 	if errors.As(err, &appErr) {
-		_ = output.WriteJSONError(cmd.OutOrStdout(), appErr, commandMeta(command))
+		if writeErr := output.WriteJSONError(cmd.OutOrStdout(), appErr, commandMeta(command)); writeErr != nil {
+			return writeErr
+		}
 	} else {
-		_ = output.WriteJSONError(cmd.OutOrStdout(), output.NewError("internal_error", err.Error(), nil), commandMeta(command))
+		if writeErr := output.WriteJSONError(cmd.OutOrStdout(), output.NewError("internal_error", err.Error(), nil), commandMeta(command)); writeErr != nil {
+			return writeErr
+		}
 	}
 	return output.MarkHandled(err)
 }

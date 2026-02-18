@@ -39,8 +39,8 @@ func newCharacterImportCmd() *cobra.Command {
 			if err != nil {
 				return writeErr(cmd, ctx.JSON, "character import", err)
 			}
-			if err := validateCharacterJSON(raw); err != nil {
-				return writeErr(cmd, ctx.JSON, "character import", err)
+			if validationErr := validateCharacterJSON(raw); validationErr != nil {
+				return writeErr(cmd, ctx.JSON, "character import", validationErr)
 			}
 
 			db, err := storage.Open(execCtx, ctx.DBPath)
@@ -156,18 +156,18 @@ func newCharacterShowCmd() *cobra.Command {
 				return output.WriteJSONSuccess(cmd.OutOrStdout(), map[string]any{"character": ch}, commandMeta("character show"))
 			}
 			if ch.Name != "" {
-				if err := output.WriteHuman(cmd.OutOrStdout(), "Name: %s", ch.Name); err != nil {
-					return err
+				if writeErr := output.WriteHuman(cmd.OutOrStdout(), "Name: %s", ch.Name); writeErr != nil {
+					return writeErr
 				}
 			}
-			if err := output.WriteHuman(cmd.OutOrStdout(), "ID: %s", ch.ID); err != nil {
-				return err
+			if writeErr := output.WriteHuman(cmd.OutOrStdout(), "ID: %s", ch.ID); writeErr != nil {
+				return writeErr
 			}
-			if err := output.WriteHuman(cmd.OutOrStdout(), "Source: %s", ch.Source); err != nil {
-				return err
+			if writeErr := output.WriteHuman(cmd.OutOrStdout(), "Source: %s", ch.Source); writeErr != nil {
+				return writeErr
 			}
-			if err := output.WriteHuman(cmd.OutOrStdout(), "Imported: %s", ch.ImportedAt); err != nil {
-				return err
+			if writeErr := output.WriteHuman(cmd.OutOrStdout(), "Imported: %s", ch.ImportedAt); writeErr != nil {
+				return writeErr
 			}
 			_, err = fmt.Fprintln(cmd.OutOrStdout(), ch.RawJSON)
 			return err
@@ -193,7 +193,7 @@ func validateCharacterJSON(raw []byte) error {
 	return nil
 }
 
-func readCharacterInput(fromStdin bool, fromFile, rawJSON string, stdin io.Reader) ([]byte, string, error) {
+func readCharacterInput(fromStdin bool, fromFile, rawJSON string, stdin io.Reader) (raw []byte, source string, err error) {
 	provided := 0
 	if fromStdin {
 		provided++
@@ -209,9 +209,9 @@ func readCharacterInput(fromStdin bool, fromFile, rawJSON string, stdin io.Reade
 	}
 
 	if fromStdin {
-		buf, err := io.ReadAll(stdin)
-		if err != nil {
-			return nil, "", output.NewError("validation_error", "failed reading stdin", map[string]any{"reason": err.Error()})
+		buf, readErr := io.ReadAll(stdin)
+		if readErr != nil {
+			return nil, "", output.NewError("validation_error", "failed reading stdin", map[string]any{"reason": readErr.Error()})
 		}
 		return buf, "stdin", nil
 	}
@@ -220,9 +220,9 @@ func readCharacterInput(fromStdin bool, fromFile, rawJSON string, stdin io.Reade
 		return []byte(rawJSON), "raw", nil
 	}
 
-	buf, err := os.ReadFile(fromFile)
-	if err != nil {
-		return nil, "", output.NewError("validation_error", "failed reading file", map[string]any{"reason": err.Error()})
+	buf, readErr := os.ReadFile(fromFile)
+	if readErr != nil {
+		return nil, "", output.NewError("validation_error", "failed reading file", map[string]any{"reason": readErr.Error()})
 	}
 	return buf, "file", nil
 }

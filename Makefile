@@ -1,4 +1,4 @@
-.PHONY: build clean test test-coverage lint fmt vet ci install run version help
+.PHONY: build clean test test-coverage lint fmt vet ci install run version help deps tidy tools setup test-race fmt-check docker-build docker-run
 
 BINARY_NAME := wsh
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "0.1.0")
@@ -10,6 +10,8 @@ GOFILES := $(shell find . -name '*.go' -type f)
 GOENV_GOBIN := $(shell $(GO) env GOBIN)
 GOENV_GOPATH := $(shell $(GO) env GOPATH)
 INSTALL_DIR := $(if $(GOENV_GOBIN),$(GOENV_GOBIN),$(GOENV_GOPATH)/bin)
+GOLANGCI_LINT_VERSION ?= v1.64.8
+GOLANGCI_LINT_BIN := $(INSTALL_DIR)/golangci-lint
 
 build:
 	@echo "Building $(BINARY_NAME)..."
@@ -36,8 +38,11 @@ test-race:
 lint:
 	@if command -v golangci-lint >/dev/null 2>&1; then \
 		golangci-lint run; \
+	elif [ -x "$(GOLANGCI_LINT_BIN)" ]; then \
+		"$(GOLANGCI_LINT_BIN)" run; \
 	else \
-		echo "golangci-lint not installed. Run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"; \
+		echo "golangci-lint not installed. Run: make tools"; \
+		exit 1; \
 	fi
 
 fmt:
@@ -72,6 +77,14 @@ deps:
 	$(GO) mod download
 	$(GO) mod tidy
 
+tools:
+	@echo "Installing development tools to $(INSTALL_DIR)..."
+	$(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+	@echo "Installed golangci-lint $(GOLANGCI_LINT_VERSION)"
+
+setup: deps tools
+	@echo "Setup complete"
+
 tidy:
 	$(GO) mod tidy
 
@@ -97,6 +110,8 @@ help:
 	@echo "  run           - Run the CLI with ARGS"
 	@echo "  version       - Print version info"
 	@echo "  deps          - Download and tidy dependencies"
+	@echo "  tools         - Install pinned development tools"
+	@echo "  setup         - Install dependencies and tools"
 	@echo "  tidy          - Run go mod tidy"
 	@echo "  docker-build  - Build Docker image"
 	@echo "  docker-run    - Run Docker container"

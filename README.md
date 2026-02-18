@@ -35,11 +35,17 @@ Show CLI version/build information.
 
 ## Run Locally
 
+For a fresh machine (or CI/agent environment), bootstrap dependencies and dev tools first:
+
 ```bash
-go mod tidy
-go test ./...
-go run . version
-go build -o bin/wsh .
+make setup
+```
+
+This installs Go module dependencies and pinned developer tools (including `golangci-lint`).
+
+```bash
+make ci
+make build
 ./bin/wsh version
 ```
 

@@ -22,7 +22,7 @@ type GuideConfig struct {
 	UpdatedAt          string `json:"updated_at"`
 }
 
-func UpsertGuideConfig(ctx context.Context, db *sql.DB, cfg GuideConfig) error {
+func UpsertGuideConfig(ctx context.Context, db *sql.DB, cfg *GuideConfig) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	if cfg.CreatedAt == "" {
 		cfg.CreatedAt = now

@@ -32,7 +32,8 @@ func TestGuideSetupShowValidateJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &setup); err != nil {
 		t.Fatalf("invalid json output: %v", err)
 	}
-	if ok, _ := setup["ok"].(bool); !ok {
+	ok, okType := setup["ok"].(bool)
+	if !okType || !ok {
 		t.Fatalf("expected ok=true, got: %v", setup)
 	}
 
@@ -72,9 +73,18 @@ func TestCharacterImportListShowJSON(t *testing.T) {
 		t.Fatalf("invalid import output json: %v", err)
 	}
 
-	data := importResp["data"].(map[string]any)
-	character := data["character"].(map[string]any)
-	id := character["id"].(string)
+	data, ok := importResp["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected data object, got: %T", importResp["data"])
+	}
+	character, ok := data["character"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected character object, got: %T", data["character"])
+	}
+	id, ok := character["id"].(string)
+	if !ok || id == "" {
+		t.Fatalf("expected non-empty character id, got: %v", character["id"])
+	}
 
 	out, _, code = Execute([]string{"character", "list", "--db-path", dbPath, "--json"}, nil)
 	if code != 0 {

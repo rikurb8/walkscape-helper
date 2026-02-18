@@ -17,9 +17,20 @@ func defaultDBPath() string {
 }
 
 func contextFromCommand(cmd *cobra.Command) Context {
-	jsonOut, _ := cmd.Flags().GetBool("json")
-	verbose, _ := cmd.Flags().GetBool("verbose")
-	dbPath, _ := cmd.Flags().GetString("db-path")
+	jsonOut, err := cmd.Flags().GetBool("json")
+	if err != nil {
+		jsonOut = false
+	}
+
+	verbose, err := cmd.Flags().GetBool("verbose")
+	if err != nil {
+		verbose = false
+	}
+
+	dbPath, err := cmd.Flags().GetString("db-path")
+	if err != nil {
+		dbPath = ""
+	}
 	if dbPath == "" {
 		dbPath = defaultDBPath()
 	}

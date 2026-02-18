@@ -21,16 +21,17 @@ type Character struct {
 	ImportedAt     string `json:"imported_at"`
 }
 
-func NormalizeCharacterJSON(raw []byte) ([]byte, string, error) {
+func NormalizeCharacterJSON(raw []byte) (normalized []byte, name string, err error) {
 	var payload map[string]any
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		return nil, "", err
-	}
-	normalized, err := json.Marshal(payload)
+	err = json.Unmarshal(raw, &payload)
 	if err != nil {
 		return nil, "", err
 	}
-	name := ""
+	normalized, err = json.Marshal(payload)
+	if err != nil {
+		return nil, "", err
+	}
+	name = ""
 	if v, ok := payload["name"].(string); ok {
 		name = v
 	}

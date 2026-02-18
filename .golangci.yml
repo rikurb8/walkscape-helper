@@ -20,7 +20,7 @@ linters:
     - bodyclose
     - dogsled
     - dupl
-    - exportloopref
+    - copyloopvar
     - exhaustive
     - gochecknoinits
     - goconst

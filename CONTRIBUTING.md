@@ -17,10 +17,12 @@ Thank you for your interest in contributing to walkscape-helper! This document p
    cd walkscape-helper
    ```
 
-2. Install dependencies:
+2. Bootstrap dependencies and dev tools:
    ```bash
-   go mod download
+   make setup
    ```
+
+   This installs Go module dependencies and pinned development tooling (including `golangci-lint`).
 
 3. Build the project:
    ```bash
@@ -52,6 +54,11 @@ Thank you for your interest in contributing to walkscape-helper! This document p
    make lint
    # or
    golangci-lint run
+   ```
+
+   If `golangci-lint` is missing, run:
+   ```bash
+   make tools
    ```
 
 3. **Run all tests:**

@@ -7,7 +7,7 @@ import (
 	"walkscape-helper/internal/output"
 )
 
-func Execute(args []string, stdin io.Reader) (string, string, int) {
+func Execute(args []string, stdin io.Reader) (stdout, stderr string, exitCode int) {
 	cmd := NewRootCmd()
 	outBuf := bytes.NewBuffer(nil)
 	errBuf := bytes.NewBuffer(nil)

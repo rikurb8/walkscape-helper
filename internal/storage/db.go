@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 
-	_ "modernc.org/sqlite"
+	_ "modernc.org/sqlite" // register sqlite driver
 )
 
 func Open(ctx context.Context, path string) (*sql.DB, error) {

@@ -36,7 +36,10 @@ func NewRootCmd() *cobra.Command {
 			viper.SetEnvPrefix("WSH")
 			viper.AutomaticEnv()
 
-			verbose, _ := cmd.Flags().GetBool("verbose")
+			verbose, err := cmd.Flags().GetBool("verbose")
+			if err != nil {
+				verbose = false
+			}
 			logging.Init(verbose, os.Stderr)
 
 			if !cmd.Flags().Changed("db-path") {
