@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"walkscape-helper/internal/logging"
 	"walkscape-helper/internal/output"
 
 	"github.com/spf13/cobra"
@@ -34,6 +35,9 @@ func NewRootCmd() *cobra.Command {
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			viper.SetEnvPrefix("WSH")
 			viper.AutomaticEnv()
+
+			verbose, _ := cmd.Flags().GetBool("verbose")
+			logging.Init(verbose, os.Stderr)
 
 			if !cmd.Flags().Changed("db-path") {
 				dbPath := viper.GetString("db_path")

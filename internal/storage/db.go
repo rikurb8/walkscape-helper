@@ -9,20 +9,54 @@ import (
 )
 
 func Open(ctx context.Context, path string) (*sql.DB, error) {
-	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)", path)
+	dsn := buildDSN(path)
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}
+
+	// CLI usage does not benefit from pooling; keep a single connection so
+	// connection-scoped SQLite pragmas are consistently applied.
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
+
+	if err := setPragmas(ctx, db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+
 	if err := migrate(ctx, db); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
+
 	return db, nil
+}
+
+func buildDSN(path string) string {
+	return fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)", path)
+}
+
+func setPragmas(ctx context.Context, db *sql.DB) error {
+	pragmas := []string{
+		"PRAGMA journal_mode=WAL",
+		"PRAGMA foreign_keys=ON",
+		"PRAGMA synchronous=NORMAL",
+		"PRAGMA cache_size=-64000",
+		"PRAGMA temp_store=MEMORY",
+	}
+
+	for _, pragma := range pragmas {
+		if _, err := db.ExecContext(ctx, pragma); err != nil {
+			return fmt.Errorf("failed to set pragma %q: %w", pragma, err)
+		}
+	}
+	return nil
 }
 
 func migrate(ctx context.Context, db *sql.DB) error {

@@ -156,11 +156,19 @@ func newCharacterShowCmd() *cobra.Command {
 				return output.WriteJSONSuccess(cmd.OutOrStdout(), map[string]any{"character": ch}, commandMeta("character show"))
 			}
 			if ch.Name != "" {
-				_ = output.WriteHuman(cmd.OutOrStdout(), "Name: %s", ch.Name)
+				if err := output.WriteHuman(cmd.OutOrStdout(), "Name: %s", ch.Name); err != nil {
+					return err
+				}
 			}
-			_ = output.WriteHuman(cmd.OutOrStdout(), "ID: %s", ch.ID)
-			_ = output.WriteHuman(cmd.OutOrStdout(), "Source: %s", ch.Source)
-			_ = output.WriteHuman(cmd.OutOrStdout(), "Imported: %s", ch.ImportedAt)
+			if err := output.WriteHuman(cmd.OutOrStdout(), "ID: %s", ch.ID); err != nil {
+				return err
+			}
+			if err := output.WriteHuman(cmd.OutOrStdout(), "Source: %s", ch.Source); err != nil {
+				return err
+			}
+			if err := output.WriteHuman(cmd.OutOrStdout(), "Imported: %s", ch.ImportedAt); err != nil {
+				return err
+			}
 			_, err = fmt.Fprintln(cmd.OutOrStdout(), ch.RawJSON)
 			return err
 		},

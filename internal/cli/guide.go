@@ -95,12 +95,19 @@ func newGuideShowCmd() *cobra.Command {
 				return output.WriteJSONSuccess(cmd.OutOrStdout(), map[string]any{"config": cfg}, commandMeta("guide show"))
 			}
 
-			_ = output.WriteHuman(cmd.OutOrStdout(), "LLM: %s / %s", cfg.LLMProvider, cfg.LLMModel)
-			_ = output.WriteHuman(cmd.OutOrStdout(), "LLM API key env: %s", cfg.LLMAPIKeyEnv)
-			_ = output.WriteHuman(cmd.OutOrStdout(), "Embedding: %s / %s", cfg.EmbeddingProvider, cfg.EmbeddingModel)
-			_ = output.WriteHuman(cmd.OutOrStdout(), "Vector DB: %s @ %s (%s)", cfg.VectorDBProvider, cfg.VectorDBURL, cfg.VectorDBCollection)
-			_ = output.WriteHuman(cmd.OutOrStdout(), "Persona: %s", cfg.PersonaName)
-			return nil
+			if err := output.WriteHuman(cmd.OutOrStdout(), "LLM: %s / %s", cfg.LLMProvider, cfg.LLMModel); err != nil {
+				return err
+			}
+			if err := output.WriteHuman(cmd.OutOrStdout(), "LLM API key env: %s", cfg.LLMAPIKeyEnv); err != nil {
+				return err
+			}
+			if err := output.WriteHuman(cmd.OutOrStdout(), "Embedding: %s / %s", cfg.EmbeddingProvider, cfg.EmbeddingModel); err != nil {
+				return err
+			}
+			if err := output.WriteHuman(cmd.OutOrStdout(), "Vector DB: %s @ %s (%s)", cfg.VectorDBProvider, cfg.VectorDBURL, cfg.VectorDBCollection); err != nil {
+				return err
+			}
+			return output.WriteHuman(cmd.OutOrStdout(), "Persona: %s", cfg.PersonaName)
 		},
 	}
 }

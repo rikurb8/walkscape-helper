@@ -14,7 +14,7 @@ Guidance for autonomous coding agents working in `walkscape-helper`.
 - Language: Go (`go 1.24.0` in `go.mod`).
 - App type: CLI (`cobra` + `viper`) with SQLite (`modernc.org/sqlite`).
 - Entry point: `main.go`.
-- Core packages: `internal/cli`, `internal/storage`, `internal/output`.
+- Core packages: `internal/cli`, `internal/storage`, `internal/output`, `internal/logging`.
 
 ## Rule files check (Cursor/Copilot)
 
@@ -27,9 +27,22 @@ Guidance for autonomous coding agents working in `walkscape-helper`.
 
 Run commands from repo root: `walkscape-helper`.
 
+### Using Make (recommended)
+
+- `make build` - build binary to `bin/wsh`
+- `make test` - run all tests
+- `make test-coverage` - run tests with HTML coverage report
+- `make test-race` - run tests with race detector
+- `make lint` - run golangci-lint
+- `make fmt` - format source files
+- `make vet` - run go vet
+- `make ci` - run all CI checks (fmt-check, vet, test, build)
+- `make clean` - remove build artifacts
+
 ### Dependency/setup
 
 - `go mod tidy` - ensure module graph is tidy.
+- `make deps` - download and tidy dependencies.
 
 ### Build
 
@@ -53,19 +66,15 @@ Run commands from repo root: `walkscape-helper`.
 
 ### Lint/format/static checks
 
-No dedicated linter config (no `golangci-lint` file) is currently committed.
-Use standard Go checks:
+Project uses `golangci-lint` with configuration in `.golangci.yml`.
 
+- `make lint` - run golangci-lint.
 - `gofmt -w .` - format source files.
 - `go vet ./...` - static analysis.
-- Optional if installed locally: `golangci-lint run`.
 
 Recommended pre-PR quality gate:
 
-1. `gofmt -w .`
-2. `go vet ./...`
-3. `go test ./... -count=1`
-4. `go build ./...`
+1. `make ci` (runs fmt-check, vet, test, build)
 
 ## Architecture and implementation conventions
 
