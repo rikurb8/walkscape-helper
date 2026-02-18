@@ -33,6 +33,10 @@ Manage imported character JSON snapshots.
 
 Show CLI version/build information.
 
+### `wsh completion`
+
+Generate shell completion scripts for `bash`, `zsh`, `fish`, or `powershell`.
+
 ## Run Locally
 
 For a fresh machine (or CI/agent environment), bootstrap dependencies and dev tools first:
@@ -51,7 +55,58 @@ make build
 
 By default, the SQLite database is created at `./wsh.db`.
 
+## Shell Completion
+
+`wsh` includes a completion command out of the box:
+
+```bash
+./bin/wsh completion --help
+```
+
+Generate and install completions per shell:
+
+```bash
+# bash
+./bin/wsh completion bash > ~/.local/share/bash-completion/completions/wsh
+
+# zsh
+./bin/wsh completion zsh > ~/.zsh/completions/_wsh
+
+# fish
+./bin/wsh completion fish > ~/.config/fish/completions/wsh.fish
+
+# powershell
+./bin/wsh completion powershell > ./wsh.ps1
+```
+
+You can pass `--no-descriptions` to generate leaner completion scripts.
+
+## LLM-Ready CLI Docs
+
+The repo includes a Cobra doc generator at `internal/tools/docgen`.
+
+Generate markdown command docs:
+
+```bash
+make docs-cli
+```
+
+Or run the generator directly:
+
+```bash
+go run ./internal/tools/docgen -out ./docs/cli -format markdown
+```
+
+Supported formats: `markdown`, `man`, `rest`.
+
+Optional front matter for static sites:
+
+```bash
+go run ./internal/tools/docgen -out ./docs/cli -format markdown -frontmatter
+```
+
 ## Docs
 
 - `docs/NEXT_STEPS.md`: phase-1 implementation plan and scope.
 - `docs/FUTURE.md`: high-level roadmap and future areas.
+- `docs/cli/`: generated command reference docs (via `make docs-cli`).

@@ -159,3 +159,13 @@ func TestHumanModeOutput(t *testing.T) {
 		t.Fatalf("expected human-mode list output with imported character name: %s", out)
 	}
 }
+
+func TestCompletionCommand(t *testing.T) {
+	out, _, code := Execute([]string{"completion", "bash"}, nil)
+	if code != 0 {
+		t.Fatalf("completion bash failed: %d", code)
+	}
+	if !strings.Contains(out, "__start_wsh") {
+		t.Fatalf("expected bash completion script output")
+	}
+}

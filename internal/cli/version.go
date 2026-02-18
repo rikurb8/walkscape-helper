@@ -10,6 +10,8 @@ func newVersionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
 		Short: "Print version",
+		Long:  "Print CLI version and build metadata.",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := contextFromCommand(cmd)
 			if ctx.JSON {

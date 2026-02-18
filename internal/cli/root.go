@@ -32,6 +32,10 @@ func NewRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "wsh",
 		Short: "Walkscape Helper CLI",
+		Long:  "Walkscape Helper is a local-first CLI for guide setup and character snapshot workflows.",
+		Example: "  wsh guide setup --llm-provider openai --llm-model gpt-4o-mini --llm-api-key-env OPENAI_API_KEY --embedding-provider openai --embedding-model text-embedding-3-small --vectordb-provider qdrant --vectordb-url http://localhost:6333 --vectordb-collection walkscape\n" +
+			"  wsh character import --from-file ./character.json\n" +
+			"  wsh character list --json",
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			viper.SetEnvPrefix("WSH")
 			viper.AutomaticEnv()
@@ -64,6 +68,7 @@ func NewRootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
+	root.DisableAutoGenTag = true
 
 	root.SetErrPrefix("")
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
@@ -74,23 +79,32 @@ func NewRootCmd() *cobra.Command {
 	root.PersistentFlags().Bool("verbose", false, "enable verbose logging")
 	root.PersistentFlags().String("db-path", defaultDBPath(), "path to sqlite database")
 
-	root.PersistentPreRun = func(cmd *cobra.Command, args []string) {
-		_ = args
-		ctx := contextFromCommand(cmd)
-		if ctx.JSON {
-			cmd.SetOut(os.Stdout)
-			cmd.SetErr(os.Stderr)
-		}
-	}
+	root.AddGroup(
+		&cobra.Group{ID: "setup", Title: "Setup Commands"},
+		&cobra.Group{ID: "data", Title: "Data Commands"},
+		&cobra.Group{ID: "tooling", Title: "Tooling Commands"},
+		&cobra.Group{ID: "meta", Title: "Meta Commands"},
+	)
 
-	root.AddCommand(newGuideCmd())
-	root.AddCommand(newCharacterCmd())
-	root.AddCommand(newVersionCmd())
+	guideCmd := newGuideCmd()
+	guideCmd.GroupID = "setup"
+	root.AddCommand(guideCmd)
+
+	characterCmd := newCharacterCmd()
+	characterCmd.GroupID = "data"
+	root.AddCommand(characterCmd)
+
+	root.CompletionOptions.DisableDefaultCmd = true
+	completionCmd := newCompletionCmd(root)
+	completionCmd.GroupID = "tooling"
+	root.AddCommand(completionCmd)
+
+	versionCmd := newVersionCmd()
+	versionCmd.GroupID = "meta"
+	root.AddCommand(versionCmd)
 
 	root.SetOut(os.Stdout)
 	root.SetErr(os.Stderr)
-
-	root.SetHelpCommand(&cobra.Command{Hidden: true})
 
 	root.SetVersionTemplate(fmt.Sprintf("%s\n", versionLabel()))
 	root.Version = appVersion()

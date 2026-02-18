@@ -1,4 +1,4 @@
-.PHONY: build clean test test-coverage lint fmt vet ci install run version help deps tidy tools setup test-race fmt-check docker-build docker-run
+.PHONY: build clean test test-coverage lint fmt vet ci install run version help deps tidy tools setup test-race fmt-check docker-build docker-run docs-cli docs-cli-frontmatter
 
 BINARY_NAME := wsh
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "0.1.0")
@@ -94,6 +94,12 @@ docker-build:
 docker-run:
 	docker run --rm $(BINARY_NAME):$(VERSION) version
 
+docs-cli:
+	$(GO) run ./internal/tools/docgen -out ./docs/cli -format markdown
+
+docs-cli-frontmatter:
+	$(GO) run ./internal/tools/docgen -out ./docs/cli -format markdown -frontmatter
+
 help:
 	@echo "Available targets:"
 	@echo "  build         - Build the binary (bin/wsh)"
@@ -115,6 +121,8 @@ help:
 	@echo "  tidy          - Run go mod tidy"
 	@echo "  docker-build  - Build Docker image"
 	@echo "  docker-run    - Run Docker container"
+	@echo "  docs-cli      - Generate markdown CLI reference docs"
+	@echo "  docs-cli-frontmatter - Generate markdown docs with YAML front matter"
 	@echo ""
 	@echo "Variables:"
 	@echo "  VERSION       - Version string (default: git tag or 0.1.0)"

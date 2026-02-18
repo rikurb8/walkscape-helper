@@ -17,6 +17,11 @@ func newCharacterCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "character",
 		Short: "Manage imported character data",
+		Long:  "Import and inspect character JSON snapshots stored in SQLite.",
+		Example: "  wsh character import --from-file ./character.json\n" +
+			"  wsh character list\n" +
+			"  wsh character show --latest",
+		Args: cobra.NoArgs,
 	}
 	cmd.AddCommand(newCharacterImportCmd())
 	cmd.AddCommand(newCharacterListCmd())
@@ -32,6 +37,8 @@ func newCharacterImportCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "import",
 		Short: "Import character JSON data",
+		Long:  "Import one character JSON payload from stdin, file, or inline JSON.",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := contextFromCommand(cmd)
 			execCtx := cmd.Context()
@@ -76,6 +83,8 @@ func newCharacterListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
 		Short: "List imported characters",
+		Long:  "List imported characters ordered by newest first.",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := contextFromCommand(cmd)
 			execCtx := cmd.Context()
@@ -120,6 +129,8 @@ func newCharacterShowCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "show",
 		Short: "Show one imported character",
+		Long:  "Show one imported character by id or show the latest imported character.",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := contextFromCommand(cmd)
 			execCtx := cmd.Context()

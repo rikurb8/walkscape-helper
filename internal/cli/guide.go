@@ -13,6 +13,11 @@ func newGuideCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "guide",
 		Short: "Manage guide configuration",
+		Long:  "Manage persisted guide runtime settings used by local assistant workflows.",
+		Example: "  wsh guide setup --llm-provider openai --llm-model gpt-4o-mini --llm-api-key-env OPENAI_API_KEY --embedding-provider openai --embedding-model text-embedding-3-small --vectordb-provider qdrant --vectordb-url http://localhost:6333 --vectordb-collection walkscape\n" +
+			"  wsh guide show\n" +
+			"  wsh guide validate --json",
+		Args: cobra.NoArgs,
 	}
 	cmd.AddCommand(newGuideSetupCmd())
 	cmd.AddCommand(newGuideShowCmd())
@@ -26,6 +31,8 @@ func newGuideSetupCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "setup",
 		Short: "Set guide configuration",
+		Long:  "Save required guide configuration fields in SQLite.",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := contextFromCommand(cmd)
 			execCtx := cmd.Context()
@@ -71,6 +78,8 @@ func newGuideShowCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "show",
 		Short: "Show guide configuration",
+		Long:  "Show the currently saved guide configuration.",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := contextFromCommand(cmd)
 			execCtx := cmd.Context()
@@ -116,6 +125,8 @@ func newGuideValidateCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "validate",
 		Short: "Validate guide configuration completeness",
+		Long:  "Validate that all required guide configuration fields are present.",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := contextFromCommand(cmd)
 			execCtx := cmd.Context()
