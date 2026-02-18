@@ -1,0 +1,13 @@
+{
+  "name": "Example Adventurer",
+  "level": 12,
+  "skills": {
+    "fishing": 20,
+    "woodcutting": 15,
+    "mining": 18
+  },
+  "equipment": {
+    "main_hand": "Bronze Fishing Rod",
+    "off_hand": "Traveler Satchel"
+  }
+}
