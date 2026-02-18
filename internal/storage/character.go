@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/go-jet/jet/v2/sqlite"
 	"github.com/google/uuid"
 )
 
@@ -55,10 +56,20 @@ func InsertCharacter(ctx context.Context, db *sql.DB, source string, raw []byte)
 		ImportedAt:     now,
 	}
 
-	_, err = db.ExecContext(ctx, `
-		INSERT INTO characters (id, name, source, raw_json, normalized_json, content_hash, imported_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, ch.ID, ch.Name, ch.Source, ch.RawJSON, ch.NormalizedJSON, ch.ContentHash, ch.ImportedAt)
+	stmt := charactersTable.
+		INSERT(
+			charactersID,
+			charactersName,
+			charactersSource,
+			charactersRawJSON,
+			charactersNormalizedJSON,
+			charactersContentHash,
+			charactersImportedAt,
+		).
+		VALUES(ch.ID, ch.Name, ch.Source, ch.RawJSON, ch.NormalizedJSON, ch.ContentHash, ch.ImportedAt)
+
+	query, args := stmt.Sql()
+	_, err = db.ExecContext(ctx, query, args...)
 	if err != nil {
 		return Character{}, err
 	}
@@ -66,11 +77,21 @@ func InsertCharacter(ctx context.Context, db *sql.DB, source string, raw []byte)
 }
 
 func ListCharacters(ctx context.Context, db *sql.DB) ([]Character, error) {
-	rows, err := db.QueryContext(ctx, `
-		SELECT id, name, source, raw_json, normalized_json, content_hash, imported_at
-		FROM characters
-		ORDER BY imported_at DESC
-	`)
+	stmt := sqlite.
+		SELECT(
+			charactersID,
+			charactersName,
+			charactersSource,
+			charactersRawJSON,
+			charactersNormalizedJSON,
+			charactersContentHash,
+			charactersImportedAt,
+		).
+		FROM(charactersTable).
+		ORDER_BY(charactersImportedAt.DESC())
+
+	query, args := stmt.Sql()
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -92,10 +113,30 @@ func ListCharacters(ctx context.Context, db *sql.DB) ([]Character, error) {
 
 func GetCharacterByID(ctx context.Context, db *sql.DB, id string) (Character, bool, error) {
 	var ch Character
-	err := db.QueryRowContext(ctx, `
-		SELECT id, name, source, raw_json, normalized_json, content_hash, imported_at
-		FROM characters WHERE id = ?
-	`, id).Scan(&ch.ID, &ch.Name, &ch.Source, &ch.RawJSON, &ch.NormalizedJSON, &ch.ContentHash, &ch.ImportedAt)
+	stmt := sqlite.
+		SELECT(
+			charactersID,
+			charactersName,
+			charactersSource,
+			charactersRawJSON,
+			charactersNormalizedJSON,
+			charactersContentHash,
+			charactersImportedAt,
+		).
+		FROM(charactersTable).
+		WHERE(charactersID.EQ(sqlite.String(id))).
+		LIMIT(1)
+
+	query, args := stmt.Sql()
+	err := db.QueryRowContext(ctx, query, args...).Scan(
+		&ch.ID,
+		&ch.Name,
+		&ch.Source,
+		&ch.RawJSON,
+		&ch.NormalizedJSON,
+		&ch.ContentHash,
+		&ch.ImportedAt,
+	)
 	if err == sql.ErrNoRows {
 		return Character{}, false, nil
 	}
@@ -107,10 +148,30 @@ func GetCharacterByID(ctx context.Context, db *sql.DB, id string) (Character, bo
 
 func GetLatestCharacter(ctx context.Context, db *sql.DB) (Character, bool, error) {
 	var ch Character
-	err := db.QueryRowContext(ctx, `
-		SELECT id, name, source, raw_json, normalized_json, content_hash, imported_at
-		FROM characters ORDER BY imported_at DESC LIMIT 1
-	`).Scan(&ch.ID, &ch.Name, &ch.Source, &ch.RawJSON, &ch.NormalizedJSON, &ch.ContentHash, &ch.ImportedAt)
+	stmt := sqlite.
+		SELECT(
+			charactersID,
+			charactersName,
+			charactersSource,
+			charactersRawJSON,
+			charactersNormalizedJSON,
+			charactersContentHash,
+			charactersImportedAt,
+		).
+		FROM(charactersTable).
+		ORDER_BY(charactersImportedAt.DESC()).
+		LIMIT(1)
+
+	query, args := stmt.Sql()
+	err := db.QueryRowContext(ctx, query, args...).Scan(
+		&ch.ID,
+		&ch.Name,
+		&ch.Source,
+		&ch.RawJSON,
+		&ch.NormalizedJSON,
+		&ch.ContentHash,
+		&ch.ImportedAt,
+	)
 	if err == sql.ErrNoRows {
 		return Character{}, false, nil
 	}
