@@ -6,7 +6,7 @@ Thank you for your interest in contributing to walkscape-helper! This document p
 
 ### Prerequisites
 
-- Go 1.22 or later
+- Go 1.24 or later
 - Make (optional, but recommended)
 
 ### Getting Started
@@ -93,6 +93,7 @@ Thank you for your interest in contributing to walkscape-helper! This document p
 ```
 walkscape-helper/
 ├── main.go              # Entry point
+├── docs/                # Planning and roadmap docs
 ├── internal/
 │   ├── cli/             # Command definitions (cobra)
 │   ├── storage/         # Database operations (SQLite)
@@ -104,6 +105,13 @@ walkscape-helper/
     └── workflows/
         └── ci.yml       # CI pipeline
 ```
+
+## Documentation
+
+- Keep `README.md` concise and command-oriented.
+- Put phase plans and future roadmap items under `docs/`.
+  - `docs/NEXT_STEPS.md`: near-term phase planning
+  - `docs/FUTURE.md`: long-term roadmap
 
 ## Adding a New Command
 
