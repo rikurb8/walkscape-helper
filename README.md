@@ -29,6 +29,29 @@ Manage imported character JSON snapshots.
 - `list`: list imported characters.
 - `show`: show one character by id or the most recently imported one.
 
+### `wsh wiki`
+
+Manage local wiki snapshots and incremental updates.
+
+- `scrape full`: fetch a full snapshot (raw API payloads + normalized NDJSON) into `data/wiki/<snapshot_id>/`.
+- `scrape update`: fetch recent changes since the stored cursor and write an update snapshot.
+- `status`: show last snapshot metadata and incremental cursor readiness.
+
+Common workflow:
+
+```bash
+# initial seed (creates cursor metadata for incremental updates)
+./bin/wsh wiki scrape full --out ./data/wiki
+
+# inspect local status
+./bin/wsh wiki status --out ./data/wiki
+
+# incremental refresh
+./bin/wsh wiki scrape update --out ./data/wiki
+```
+
+By default, wiki scraping includes namespace `0` and filters to the phase-1 focus categories (skills, activities, recipes, equipment, etc.).
+
 ### `wsh version`
 
 Show CLI version/build information.

@@ -15,6 +15,7 @@
   - `articles`: 1771
   - `images`: 2293
 - Custom namespaces exist (`Guide`, `Gear`, `Staff`, `Data`, `Module`, `Translations`).
+- Some pages in `Data` namespace appear access-restricted via API (`accessdenied` when requesting content); treat `106` as optional and continue on permission errors in phase 1.
 - API high limits are permission-gated; anonymous clients should assume `500` item batch limits.
 - `https://wiki.walkscape.app/robots.txt` currently redirects to the main page, so treat crawl etiquette as explicit policy in scraper config (rate limit + backoff + contact string in User-Agent).
 
@@ -251,10 +252,70 @@ All commands should support `--json` envelopes and stable error codes following 
 - Large media can bloat snapshots.
   - Mitigation: media download opt-in; default metadata-only for files.
 
+## Phase 1 Assumptions (Local scrape MVP)
+
+This phase is intentionally limited to "get wiki data locally with metadata".
+
+- Primary goal: reproducible local snapshot directory suitable for later chunking/indexing.
+- Output target: directory bundle first, zip export can follow as a convenience step.
+- Revision scope: latest revision only per page (no full history backfill).
+- Namespace default: `0` (main namespace) enabled by default; `100,102,104,106,828` opt-in via flag.
+- Initial topical focus is category-driven within namespace `0`, prioritizing:
+  - Game mechanics: Core Mechanics, Skills, Activities, Recipes, Achievements, Attributes, Job Boards, Keywords, Abilities, Rumors, Tips
+  - Items: Equipment, Materials, Consumables, Collectibles, Chests, Pet Eggs, Cosmetics
+- File handling: collect file metadata (`wiki_files`) but do not download binaries unless `--download-media` is set.
+- Incremental sync: out of scope for phase 1; full scrape only.
+- Embeddings/vector DB: out of scope for phase 1.
+- Raw preservation: store raw API request/response payloads for replay/debug.
+- Idempotency expectation: re-running creates a new `snapshot_id` directory; no in-place mutation of prior snapshots.
+- Reliability baseline: enforce rate limit, retries, `maxlag`, and checkpoint continuation tokens.
+
+### Phase 1 concrete deliverables
+
+1. New CLI command: `wsh wiki scrape full [--namespaces ...] [--out <dir>] [--download-media]`.
+2. SQLite working schema for wiki entities + fetch log/sync metadata tables.
+3. Deterministic snapshot directory output with:
+   - `manifest.json`
+   - `checksums.sha256`
+   - `raw/api/...` payload files
+   - `normalized/*.ndjson` files
+4. Validation pass at end of scrape:
+   - per-namespace counts
+   - latest revision referential integrity
+5. JSON-mode compatibility and stable error codes following existing CLI conventions.
+
+## Future Phases (Explicit)
+
+### Phase 2: Snapshot packaging and operational polish
+
+- Add `wsh wiki export --snapshot-id <id> --out <path.zip>`.
+- Ensure deterministic zip creation and checksum verification.
+- Add `wsh wiki status` for local inventory (latest snapshot, counts, last run metadata).
+
+### Phase 3: Chunk pipeline (no embeddings yet)
+
+- Add `wsh wiki chunk --snapshot <path>`.
+- Convert wikitext to retrieval text with section-aware chunking.
+- Emit `vector/chunks.ndjson` with deterministic `chunk_id` and required citation metadata.
+- Add chunk integrity checks (duplicate chunk ids, missing source refs).
+
+### Phase 4: Embeddings and indexing
+
+- Add `wsh wiki embed --snapshot <path>`.
+- Add `wsh wiki index --snapshot <path>`.
+- Keep provider-agnostic embedding interface, Qdrant-first adapter.
+- Make upserts idempotent via `chunk_id` as point id.
+
+### Phase 5: Incremental sync and reconciliation
+
+- Add `wsh wiki scrape update` using recentchanges cursor + log event handling.
+- Persist tombstones for deletes/moves/restores.
+- Add `wsh wiki scrape reconcile` for periodic audits and repair workflows.
+
 ## Recommended Implementation Order
 
-1. Add SQLite schema + `wiki scrape full` for latest revisions only.
-2. Add export to portable snapshot zip with manifest/checksums.
-3. Add chunking + embedding + vector upsert pipeline.
-4. Add `wiki scrape update` incremental sync with cursor/tombstones.
-5. Add reconciliation mode (`wiki scrape reconcile`) for periodic consistency audits.
+1. Phase 1 local scrape MVP.
+2. Phase 2 snapshot packaging + status visibility.
+3. Phase 3 chunk generation.
+4. Phase 4 embedding + vector indexing.
+5. Phase 5 incremental sync + reconciliation.
