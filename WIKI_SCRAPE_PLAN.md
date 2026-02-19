@@ -4,6 +4,7 @@
 
 - Scrape the full WalkScape wiki content from `https://wiki.walkscape.app` in a way that is reproducible and incremental.
 - Store the scraped data in a portable snapshot format that can be zipped and shared.
+- Produce a cleaned markdown corpus from scraped wiki revisions for human review and downstream chunking.
 - Transform snapshots into chunked embeddings for vector DB indexing (Qdrant first, provider-agnostic design).
 
 ## Recon Notes (MediaWiki specifics)
@@ -138,6 +139,14 @@ walkscape-wiki-snapshot/
     wiki_page_edges.ndjson
     wiki_files.ndjson
     wiki_tombstones.ndjson
+  cleaned/
+    markdown/
+      ns0/
+        Skills.md
+      ns100/
+        Guide_Getting_Started.md
+    cleaned_pages.ndjson
+    cleaning_report.ndjson
   vector/
     chunks.ndjson
     embeddings.f32.bin   (optional)
@@ -150,6 +159,7 @@ walkscape-wiki-snapshot/
 
 - NDJSON is easy to stream and language-agnostic.
 - Raw + normalized separation keeps provenance and reproducibility.
+- A `cleaned/markdown` tree provides readable artifacts and stable text inputs before chunking.
 - `manifest.json` enables validation and exact rebuild.
 
 ### `manifest.json` minimum fields
@@ -160,7 +170,73 @@ walkscape-wiki-snapshot/
 - request config (rate, retries, maxlag)
 - schema versions (`raw_schema`, `normalized_schema`, `vector_schema`)
 - item counts per file
+- cleaned corpus metadata (`cleaned_schema`, pages cleaned, pages skipped, cleaner version)
 - tool version / git commit
+
+## Clean Markdown Refinement Plan (next step)
+
+### Objective
+
+- Transform `wiki_revisions.wikitext` into clean, deterministic markdown files suitable for both human consumption and retrieval chunking.
+- Keep a strict mapping from cleaned markdown back to source page/revision for provenance.
+
+### Command surface (planned)
+
+- `wsh wiki clean --snapshot <path> [--out <path>] [--namespaces ...] [--lang ...]`
+- `wsh wiki clean validate --snapshot <path>`
+
+Both commands should support `--json` and stable error codes.
+
+### Input/output contract
+
+- Input:
+  - `normalized/wiki_pages.ndjson`
+  - `normalized/wiki_revisions.ndjson` (latest revision content)
+  - optional edge files for template/category context
+- Output:
+  - `cleaned/markdown/<namespace>/<sanitized_title>.md`
+  - `cleaned/cleaned_pages.ndjson` with one record per cleaned page
+  - `cleaned/cleaning_report.ndjson` with warnings/skips/fallback reasons
+
+### Cleaning rules (v1 deterministic)
+
+1. Expand MediaWiki markup into readable markdown where safe:
+   - preserve section hierarchy as `#`/`##` headers
+   - convert internal links to markdown links using canonical wiki URLs
+   - keep category/template references in metadata, not inline noise
+2. Reduce retrieval noise:
+   - remove nav/footer boilerplate and edit-only artifacts
+   - collapse repeated whitespace and strip empty sections
+   - keep short infobox-style key/value data as bullet lists or definition lines
+3. Preserve provenance and reproducibility:
+   - include frontmatter (or top metadata block) with `page_id`, `title`, `namespace`, `revision_id`, `revision_ts`, `source_url`, `source_oldid_url`, `content_sha1`
+   - deterministic file naming from namespace + title slug
+   - deterministic cleaning version hash in records
+
+### Cleaned page record schema (`cleaned_pages.ndjson`)
+
+- `page_id`, `title`, `namespace`, `lang_code`
+- `revision_id`, `revision_ts`, `content_sha1`
+- `markdown_path`
+- `clean_status` (`ok|partial|failed|skipped`)
+- `warnings` (array)
+- `cleaner_version`
+
+### Validation for clean corpus
+
+- Coverage: cleaned pages count matches eligible source pages for selected namespaces.
+- Integrity: each cleaned record points to an existing markdown file.
+- Determinism: rerun on same snapshot yields identical checksums.
+- Quality gates:
+  - non-empty markdown body for `ok` pages
+  - section header presence for pages that had section markers in source
+  - warning budget thresholds (alert if partial/failed ratio exceeds configured limit)
+
+### Failure handling policy
+
+- Do not fail the entire run for single-page parse errors; emit `partial`/`failed` records and continue.
+- Fail the command only when systemic issues occur (missing inputs, schema mismatch, output write failures).
+- Preserve raw wikitext for all failures so parser improvements can replay deterministically.
 
 ## Local Persistence During Scrape
 
@@ -224,6 +300,7 @@ Use SQLite as working state (fits current project architecture):
 - `wsh wiki scrape full [--namespaces ...] [--download-media]`
 - `wsh wiki scrape update`
 - `wsh wiki export --snapshot-id <id> --out <path.zip>`
+- `wsh wiki clean --snapshot <path>`
 - `wsh wiki chunk --snapshot <path>`
 - `wsh wiki embed --snapshot <path>`
 - `wsh wiki index --snapshot <path>`
@@ -286,27 +363,34 @@ This phase is intentionally limited to "get wiki data locally with metadata".
 
 ## Future Phases (Explicit)
 
-### Phase 2: Snapshot packaging and operational polish
+### Phase 2: Clean markdown refinement
+
+- Add `wsh wiki clean --snapshot <path> [--out <path>]`.
+- Build deterministic wikitext-to-markdown cleaning pipeline.
+- Emit `cleaned/markdown/*` plus `cleaned_pages.ndjson` and `cleaning_report.ndjson`.
+- Add cleaning validation command and quality metrics.
+
+### Phase 3: Snapshot packaging and operational polish
 
 - Add `wsh wiki export --snapshot-id <id> --out <path.zip>`.
 - Ensure deterministic zip creation and checksum verification.
 - Add `wsh wiki status` for local inventory (latest snapshot, counts, last run metadata).
 
-### Phase 3: Chunk pipeline (no embeddings yet)
+### Phase 4: Chunk pipeline (no embeddings yet)
 
 - Add `wsh wiki chunk --snapshot <path>`.
-- Convert wikitext to retrieval text with section-aware chunking.
+- Use cleaned markdown as primary chunk input (fallback to raw text when cleaning failed).
 - Emit `vector/chunks.ndjson` with deterministic `chunk_id` and required citation metadata.
 - Add chunk integrity checks (duplicate chunk ids, missing source refs).
 
-### Phase 4: Embeddings and indexing
+### Phase 5: Embeddings and indexing
 
 - Add `wsh wiki embed --snapshot <path>`.
 - Add `wsh wiki index --snapshot <path>`.
 - Keep provider-agnostic embedding interface, Qdrant-first adapter.
 - Make upserts idempotent via `chunk_id` as point id.
 
-### Phase 5: Incremental sync and reconciliation
+### Phase 6: Incremental sync and reconciliation
 
 - Add `wsh wiki scrape update` using recentchanges cursor + log event handling.
 - Persist tombstones for deletes/moves/restores.
@@ -315,7 +399,8 @@ This phase is intentionally limited to "get wiki data locally with metadata".
 ## Recommended Implementation Order
 
 1. Phase 1 local scrape MVP.
-2. Phase 2 snapshot packaging + status visibility.
-3. Phase 3 chunk generation.
-4. Phase 4 embedding + vector indexing.
-5. Phase 5 incremental sync + reconciliation.
+2. Phase 2 clean markdown refinement.
+3. Phase 3 snapshot packaging + status visibility.
+4. Phase 4 chunk generation.
+5. Phase 5 embedding + vector indexing.
+6. Phase 6 incremental sync + reconciliation.
