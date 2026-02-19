@@ -59,7 +59,7 @@ fmt-check:
 		exit 1; \
 	fi
 
-ci: fmt-check vet test build
+ci: fmt-check vet lint test-race test-coverage build
 	@echo "CI checks passed"
 
 install: build
@@ -111,7 +111,7 @@ help:
 	@echo "  fmt           - Format source files"
 	@echo "  fmt-check     - Check formatting without modifying"
 	@echo "  vet           - Run go vet"
-	@echo "  ci            - Run all CI checks (fmt-check, vet, test, build)"
+	@echo "  ci            - Run all quality gates (fmt-check, vet, lint, test-race, test-coverage, build)"
 	@echo "  install       - Install binary to GOBIN (or GOPATH/bin)"
 	@echo "  run           - Run the CLI with ARGS"
 	@echo "  version       - Print version info"

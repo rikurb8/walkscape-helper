@@ -99,8 +99,8 @@ func TestUpsertGuideConfigPreservesCreatedAtOnConflict(t *testing.T) {
 	time.Sleep(1100 * time.Millisecond)
 
 	second := &GuideConfig{LLMProvider: "anthropic", LLMModel: "claude-sonnet", PersonaName: "beta"}
-	if err := UpsertGuideConfig(context.Background(), db, second); err != nil {
-		t.Fatalf("second UpsertGuideConfig() error = %v", err)
+	if upsertErr := UpsertGuideConfig(context.Background(), db, second); upsertErr != nil {
+		t.Fatalf("second UpsertGuideConfig() error = %v", upsertErr)
 	}
 
 	storedSecond, found, err := GetGuideConfig(context.Background(), db)
@@ -186,13 +186,13 @@ func TestListCharactersAndGetLatestAreOrderedByImportedAtDesc(t *testing.T) {
 		t.Fatalf("InsertCharacter() first error = %v", err)
 	}
 
-	if _, err := db.ExecContext(
+	if _, execErr := db.ExecContext(
 		context.Background(),
 		"UPDATE characters SET imported_at = ? WHERE id = ?",
 		"2020-01-01T00:00:00Z",
 		first.ID,
-	); err != nil {
-		t.Fatalf("forcing first imported_at failed: %v", err)
+	); execErr != nil {
+		t.Fatalf("forcing first imported_at failed: %v", execErr)
 	}
 
 	second, err := InsertCharacter(context.Background(), db, "import", []byte(`{"name":"B"}`))
@@ -200,13 +200,13 @@ func TestListCharactersAndGetLatestAreOrderedByImportedAtDesc(t *testing.T) {
 		t.Fatalf("InsertCharacter() second error = %v", err)
 	}
 
-	if _, err := db.ExecContext(
+	if _, execErr := db.ExecContext(
 		context.Background(),
 		"UPDATE characters SET imported_at = ? WHERE id = ?",
 		"2030-01-01T00:00:00Z",
 		second.ID,
-	); err != nil {
-		t.Fatalf("forcing second imported_at failed: %v", err)
+	); execErr != nil {
+		t.Fatalf("forcing second imported_at failed: %v", execErr)
 	}
 
 	list, err := ListCharacters(context.Background(), db)

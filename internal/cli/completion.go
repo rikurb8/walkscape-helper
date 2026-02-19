@@ -11,7 +11,7 @@ func newCompletionCmd(root *cobra.Command) *cobra.Command {
 		Long:      "Generate shell completion scripts for wsh.",
 		Example:   "  wsh completion bash > ~/.local/share/bash-completion/completions/wsh\n  wsh completion zsh > ~/.zsh/completions/_wsh\n  wsh completion fish > ~/.config/fish/completions/wsh.fish\n  wsh completion powershell > wsh.ps1",
 		ValidArgs: []string{"bash", "zsh", "fish", "powershell"},
-		Args:      cobra.ExactValidArgs(1),
+		Args:      cobra.MatchAll(cobra.ExactArgs(1), cobra.OnlyValidArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			switch args[0] {
 			case "bash":
