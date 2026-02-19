@@ -3,4 +3,5 @@ bin/
 *.db-shm
 *.db-wal
 coverage.out
+coverage.html
 data/wiki/

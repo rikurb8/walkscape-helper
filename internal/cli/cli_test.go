@@ -199,7 +199,7 @@ func TestWikiScrapeFullCreatesSnapshotSkeletonJSON(t *testing.T) {
 	if len(namespaces) != 1 {
 		t.Fatalf("expected one default namespace, got %d (%v)", len(namespaces), namespaces)
 	}
-	if ns, ok := namespaces[0].(float64); !ok || int(ns) != 0 {
+	if ns, nsOK := namespaces[0].(float64); !nsOK || int(ns) != 0 {
 		t.Fatalf("expected default namespace 0, got %v", namespaces[0])
 	}
 	snapshotDir, ok := data["snapshot_dir"].(string)
@@ -373,20 +373,27 @@ func newWikiMockAPIServer(t *testing.T) *httptest.Server {
 	t.Helper()
 
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON := func(payload string) {
+			t.Helper()
+			if _, writeErr := w.Write([]byte(payload)); writeErr != nil {
+				t.Fatalf("failed writing mock wiki response: %v", writeErr)
+			}
+		}
+
 		q := r.URL.Query()
 		if q.Get("action") != "query" {
 			w.WriteHeader(http.StatusBadRequest)
-			_, _ = w.Write([]byte(`{"error":"invalid action"}`))
+			writeJSON(`{"error":"invalid action"}`)
 			return
 		}
 
 		if q.Get("list") == "allpages" {
-			_, _ = w.Write([]byte(`{"batchcomplete":"","query":{"allpages":[{"pageid":1,"ns":0,"title":"Skills"},{"pageid":2,"ns":0,"title":"Activities"}]}}`))
+			writeJSON(`{"batchcomplete":"","query":{"allpages":[{"pageid":1,"ns":0,"title":"Skills"},{"pageid":2,"ns":0,"title":"Activities"}]}}`)
 			return
 		}
 
 		if q.Get("list") == "recentchanges" {
-			_, _ = w.Write([]byte(`{"batchcomplete":"","query":{"recentchanges":[{"rcid":200,"type":"edit","ns":0,"title":"Skills","pageid":1,"revid":103,"old_revid":101,"timestamp":"2026-02-19T00:02:00Z","comment":"update"}]}}`))
+			writeJSON(`{"batchcomplete":"","query":{"recentchanges":[{"rcid":200,"type":"edit","ns":0,"title":"Skills","pageid":1,"revid":103,"old_revid":101,"timestamp":"2026-02-19T00:02:00Z","comment":"update"}]}}`)
 			return
 		}
 
@@ -396,18 +403,18 @@ func newWikiMockAPIServer(t *testing.T) *httptest.Server {
 			activities := `"2":{"pageid":2,"ns":0,"title":"Activities","fullurl":"https://wiki.walkscape.app/wiki/Activities","revisions":[{"revid":102,"parentid":101,"timestamp":"2026-02-19T00:01:00Z","sha1":"def","size":99,"comment":"seed","slots":{"main":{"contentmodel":"wikitext","*":"== Activities ==\ntext"}}}],"categories":[{"title":"Category:Activities"}],"templates":[],"links":[],"langlinks":[]}`
 			switch {
 			case strings.Contains(titles, "Skills") && strings.Contains(titles, "Activities"):
-				_, _ = w.Write([]byte(`{"batchcomplete":"","query":{"pages":{` + skills + `,` + activities + `}}}`))
+				writeJSON(`{"batchcomplete":"","query":{"pages":{` + skills + `,` + activities + `}}}`)
 			case strings.Contains(titles, "Skills"):
-				_, _ = w.Write([]byte(`{"batchcomplete":"","query":{"pages":{` + skills + `}}}`))
+				writeJSON(`{"batchcomplete":"","query":{"pages":{` + skills + `}}}`)
 			case strings.Contains(titles, "Activities"):
-				_, _ = w.Write([]byte(`{"batchcomplete":"","query":{"pages":{` + activities + `}}}`))
+				writeJSON(`{"batchcomplete":"","query":{"pages":{` + activities + `}}}`)
 			default:
-				_, _ = w.Write([]byte(`{"batchcomplete":"","query":{"pages":{}}}`))
+				writeJSON(`{"batchcomplete":"","query":{"pages":{}}}`)
 			}
 			return
 		}
 
 		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"error":"unsupported"}`))
+		writeJSON(`{"error":"unsupported"}`)
 	}))
 }

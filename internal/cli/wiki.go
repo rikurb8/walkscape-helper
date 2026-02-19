@@ -25,9 +25,11 @@ import (
 )
 
 const (
-	wikiSourceBaseURL   = "https://wiki.walkscape.app"
-	defaultWikiAPIBase  = "https://wiki.walkscape.app/api.php"
-	defaultRequestRetry = 3
+	wikiSourceBaseURL    = "https://wiki.walkscape.app"
+	defaultWikiAPIBase   = "https://wiki.walkscape.app/api.php"
+	defaultRequestRetry  = 3
+	manifestStatusFailed = "failed"
+	privateFileMode      = 0o600
 )
 
 var defaultWikiFocusCategories = []string{
@@ -73,14 +75,14 @@ type wikiAllPagesResponse struct {
 
 type wikiPagesResponse struct {
 	Query struct {
-		Pages map[string]wikiAPIPage `json:"pages"`
+		Pages map[string]*wikiAPIPage `json:"pages"`
 	} `json:"query"`
 }
 
 type wikiRecentChangesResponse struct {
 	Continue map[string]string `json:"continue"`
 	Query    struct {
-		RecentChanges []wikiRecentChange `json:"recentchanges"`
+		RecentChanges []*wikiRecentChange `json:"recentchanges"`
 	} `json:"query"`
 }
 
@@ -201,6 +203,7 @@ func newWikiScrapeCmd() *cobra.Command {
 	return cmd
 }
 
+//nolint:gocyclo
 func newWikiStatusCmd() *cobra.Command {
 	var outDir string
 
@@ -284,7 +287,7 @@ func newWikiStatusCmd() *cobra.Command {
 			if err := output.WriteHuman(cmd.OutOrStdout(), "Recentchanges cursor: %s", valueOrUnset(recentChangesCursor)); err != nil {
 				return err
 			}
-			if ready, _ := result["incremental_ready"].(bool); ready {
+			if ready, readyOK := result["incremental_ready"].(bool); readyOK && ready {
 				return output.WriteHuman(cmd.OutOrStdout(), "Incremental update is ready")
 			}
 			return output.WriteHuman(cmd.OutOrStdout(), "Run full scrape first to initialize incremental cursor")
@@ -296,6 +299,7 @@ func newWikiStatusCmd() *cobra.Command {
 	return cmd
 }
 
+//nolint:gocyclo
 func newWikiScrapeUpdateCmd() *cobra.Command {
 	var namespaces []string
 	var outDir string
@@ -359,8 +363,8 @@ func newWikiScrapeUpdateCmd() *cobra.Command {
 				"scrape_in_progress": true,
 				"counts":             map[string]any{"wiki_pages": 0, "wiki_revisions": 0, "wiki_page_edges": 0, "wiki_files": 0, "wiki_tombstones": 0},
 			}
-			if err := writeManifest(snapshotDir, manifest); err != nil {
-				appErr := output.NewError("storage_error", "failed to write snapshot manifest", map[string]any{"reason": err.Error()})
+			if manifestErr := writeManifest(snapshotDir, manifest); manifestErr != nil {
+				appErr := output.NewError("storage_error", "failed to write snapshot manifest", map[string]any{"reason": manifestErr.Error()})
 				return writeErr(cmd, ctx.JSON, "wiki scrape update", appErr)
 			}
 
@@ -376,29 +380,33 @@ func newWikiScrapeUpdateCmd() *cobra.Command {
 			categoryFilter := buildCategoryFilter(includeCategories)
 			counts, eventCount, changedPageCount, cursorTS, cursorRCID, updateErr := runWikiIncrementalUpdate(execCtx, client, snapshotID, snapshotDir, nsIDs, startTS, startRCID, maxChanges, categoryFilter)
 			if updateErr != nil {
-				manifest["status"] = "failed"
+				manifest["status"] = manifestStatusFailed
 				manifest["scrape_in_progress"] = false
 				manifest["error"] = updateErr.Error()
-				_ = writeManifest(snapshotDir, manifest)
+				if manifestErr := writeManifest(snapshotDir, manifest); manifestErr != nil {
+					manifest["manifest_write_error"] = manifestErr.Error()
+				}
 				appErr := output.NewError("storage_error", "wiki incremental update failed", map[string]any{"reason": updateErr.Error()})
 				return writeErr(cmd, ctx.JSON, "wiki scrape update", appErr)
 			}
 
-			if err := verifyLatestRevisionIntegrity(snapshotDir); err != nil {
-				manifest["status"] = "failed"
+			if integrityErr := verifyLatestRevisionIntegrity(snapshotDir); integrityErr != nil {
+				manifest["status"] = manifestStatusFailed
 				manifest["scrape_in_progress"] = false
-				manifest["error"] = err.Error()
-				_ = writeManifest(snapshotDir, manifest)
-				appErr := output.NewError("storage_error", "wiki update integrity check failed", map[string]any{"reason": err.Error()})
+				manifest["error"] = integrityErr.Error()
+				if manifestErr := writeManifest(snapshotDir, manifest); manifestErr != nil {
+					manifest["manifest_write_error"] = manifestErr.Error()
+				}
+				appErr := output.NewError("storage_error", "wiki update integrity check failed", map[string]any{"reason": integrityErr.Error()})
 				return writeErr(cmd, ctx.JSON, "wiki scrape update", appErr)
 			}
 
 			if eventCount > 0 {
-				if err := setAppMetaValue(execCtx, db, "wiki_last_sync_ts", cursorTS); err != nil {
-					return writeErr(cmd, ctx.JSON, "wiki scrape update", output.NewError("storage_error", "failed updating wiki sync timestamp", map[string]any{"reason": err.Error()}))
+				if syncErr := setAppMetaValue(execCtx, db, "wiki_last_sync_ts", cursorTS); syncErr != nil {
+					return writeErr(cmd, ctx.JSON, "wiki scrape update", output.NewError("storage_error", "failed updating wiki sync timestamp", map[string]any{"reason": syncErr.Error()}))
 				}
-				if err := setAppMetaValue(execCtx, db, "wiki_recentchanges_cursor", formatCursor(cursorTS, cursorRCID)); err != nil {
-					return writeErr(cmd, ctx.JSON, "wiki scrape update", output.NewError("storage_error", "failed updating wiki cursor", map[string]any{"reason": err.Error()}))
+				if cursorErr := setAppMetaValue(execCtx, db, "wiki_recentchanges_cursor", formatCursor(cursorTS, cursorRCID)); cursorErr != nil {
+					return writeErr(cmd, ctx.JSON, "wiki scrape update", output.NewError("storage_error", "failed updating wiki cursor", map[string]any{"reason": cursorErr.Error()}))
 				}
 			}
 
@@ -418,8 +426,8 @@ func newWikiScrapeUpdateCmd() *cobra.Command {
 				"cursor_timestamp":   cursorTS,
 				"cursor_rcid":        cursorRCID,
 			}
-			if err := writeManifest(snapshotDir, manifest); err != nil {
-				appErr := output.NewError("storage_error", "failed to finalize snapshot manifest", map[string]any{"reason": err.Error()})
+			if manifestErr := writeManifest(snapshotDir, manifest); manifestErr != nil {
+				appErr := output.NewError("storage_error", "failed to finalize snapshot manifest", map[string]any{"reason": manifestErr.Error()})
 				return writeErr(cmd, ctx.JSON, "wiki scrape update", appErr)
 			}
 
@@ -470,6 +478,7 @@ func newWikiScrapeUpdateCmd() *cobra.Command {
 	return cmd
 }
 
+//nolint:gocyclo
 func newWikiScrapeFullCmd() *cobra.Command {
 	var namespaces []string
 	var outDir string
@@ -530,8 +539,8 @@ func newWikiScrapeFullCmd() *cobra.Command {
 				"status":             "running",
 				"scrape_in_progress": true,
 			}
-			if err := writeManifest(snapshotDir, manifest); err != nil {
-				appErr := output.NewError("storage_error", "failed to write snapshot manifest", map[string]any{"reason": err.Error()})
+			if manifestErr := writeManifest(snapshotDir, manifest); manifestErr != nil {
+				appErr := output.NewError("storage_error", "failed to write snapshot manifest", map[string]any{"reason": manifestErr.Error()})
 				return writeErr(cmd, ctx.JSON, "wiki scrape full", appErr)
 			}
 
@@ -547,20 +556,24 @@ func newWikiScrapeFullCmd() *cobra.Command {
 			categoryFilter := buildCategoryFilter(includeCategories)
 			counts, scrapeErr := runFullWikiScrape(execCtx, client, snapshotID, snapshotDir, nsIDs, categoryFilter)
 			if scrapeErr != nil {
-				manifest["status"] = "failed"
+				manifest["status"] = manifestStatusFailed
 				manifest["scrape_in_progress"] = false
 				manifest["error"] = scrapeErr.Error()
-				_ = writeManifest(snapshotDir, manifest)
+				if manifestErr := writeManifest(snapshotDir, manifest); manifestErr != nil {
+					manifest["manifest_write_error"] = manifestErr.Error()
+				}
 				appErr := output.NewError("storage_error", "wiki scrape failed", map[string]any{"reason": scrapeErr.Error()})
 				return writeErr(cmd, ctx.JSON, "wiki scrape full", appErr)
 			}
 
-			if err := verifyLatestRevisionIntegrity(snapshotDir); err != nil {
-				manifest["status"] = "failed"
+			if integrityErr := verifyLatestRevisionIntegrity(snapshotDir); integrityErr != nil {
+				manifest["status"] = manifestStatusFailed
 				manifest["scrape_in_progress"] = false
-				manifest["error"] = err.Error()
-				_ = writeManifest(snapshotDir, manifest)
-				appErr := output.NewError("storage_error", "wiki scrape integrity check failed", map[string]any{"reason": err.Error()})
+				manifest["error"] = integrityErr.Error()
+				if manifestErr := writeManifest(snapshotDir, manifest); manifestErr != nil {
+					manifest["manifest_write_error"] = manifestErr.Error()
+				}
+				appErr := output.NewError("storage_error", "wiki scrape integrity check failed", map[string]any{"reason": integrityErr.Error()})
 				return writeErr(cmd, ctx.JSON, "wiki scrape full", appErr)
 			}
 
@@ -574,22 +587,22 @@ func newWikiScrapeFullCmd() *cobra.Command {
 				"wiki_files":      counts.Files,
 				"wiki_tombstones": counts.Tombstones,
 			}
-			if err := writeManifest(snapshotDir, manifest); err != nil {
-				appErr := output.NewError("storage_error", "failed to finalize snapshot manifest", map[string]any{"reason": err.Error()})
+			if manifestErr := writeManifest(snapshotDir, manifest); manifestErr != nil {
+				appErr := output.NewError("storage_error", "failed to finalize snapshot manifest", map[string]any{"reason": manifestErr.Error()})
 				return writeErr(cmd, ctx.JSON, "wiki scrape full", appErr)
 			}
 
 			nowCursorTS := time.Now().UTC().Format(time.RFC3339)
-			if err := setWikiLastSnapshot(execCtx, db, snapshotID); err != nil {
-				appErr := output.NewError("storage_error", "failed to update wiki snapshot metadata", map[string]any{"reason": err.Error()})
+			if snapshotErr := setWikiLastSnapshot(execCtx, db, snapshotID); snapshotErr != nil {
+				appErr := output.NewError("storage_error", "failed to update wiki snapshot metadata", map[string]any{"reason": snapshotErr.Error()})
 				return writeErr(cmd, ctx.JSON, "wiki scrape full", appErr)
 			}
-			if err := setAppMetaValue(execCtx, db, "wiki_last_sync_ts", nowCursorTS); err != nil {
-				appErr := output.NewError("storage_error", "failed to update wiki sync metadata", map[string]any{"reason": err.Error()})
+			if syncErr := setAppMetaValue(execCtx, db, "wiki_last_sync_ts", nowCursorTS); syncErr != nil {
+				appErr := output.NewError("storage_error", "failed to update wiki sync metadata", map[string]any{"reason": syncErr.Error()})
 				return writeErr(cmd, ctx.JSON, "wiki scrape full", appErr)
 			}
-			if err := setAppMetaValue(execCtx, db, "wiki_recentchanges_cursor", formatCursor(nowCursorTS, 0)); err != nil {
-				appErr := output.NewError("storage_error", "failed to update wiki sync cursor", map[string]any{"reason": err.Error()})
+			if cursorErr := setAppMetaValue(execCtx, db, "wiki_recentchanges_cursor", formatCursor(nowCursorTS, 0)); cursorErr != nil {
+				appErr := output.NewError("storage_error", "failed to update wiki sync cursor", map[string]any{"reason": cursorErr.Error()})
 				return writeErr(cmd, ctx.JSON, "wiki scrape full", appErr)
 			}
 
@@ -640,6 +653,7 @@ func newWikiScrapeFullCmd() *cobra.Command {
 	return cmd
 }
 
+//nolint:gocyclo
 func runFullWikiScrape(execCtx context.Context, client *wikiFetchClient, snapshotID, snapshotDir string, nsIDs []int, categoryFilter map[string]struct{}) (wikiScrapeCounts, error) {
 	counts := wikiScrapeCounts{}
 	rawDir := filepath.Join(snapshotDir, "raw", "api", snapshotID)
@@ -668,7 +682,7 @@ func runFullWikiScrape(execCtx context.Context, client *wikiFetchClient, snapsho
 				return counts, err
 			}
 			rawName := fmt.Sprintf("allpages_ns%d_%04d.json", ns, allPagesBatch)
-			if err := os.WriteFile(filepath.Join(rawDir, rawName), raw, 0o644); err != nil {
+			if err := os.WriteFile(filepath.Join(rawDir, rawName), raw, privateFileMode); err != nil {
 				return counts, err
 			}
 
@@ -695,12 +709,15 @@ func runFullWikiScrape(execCtx context.Context, client *wikiFetchClient, snapsho
 			}
 
 			rawName := fmt.Sprintf("page_batch_%04d.json", batchIndex)
-			if err := os.WriteFile(filepath.Join(rawDir, rawName), raw, 0o644); err != nil {
+			if err := os.WriteFile(filepath.Join(rawDir, rawName), raw, privateFileMode); err != nil {
 				return counts, err
 			}
 			batchIndex++
 
 			for _, apiPage := range payload.Query.Pages {
+				if apiPage == nil {
+					continue
+				}
 				if apiPage.PageID <= 0 {
 					continue
 				}
@@ -759,6 +776,7 @@ func runFullWikiScrape(execCtx context.Context, client *wikiFetchClient, snapsho
 	return counts, nil
 }
 
+//nolint:gocyclo,gocritic
 func runWikiIncrementalUpdate(
 	execCtx context.Context,
 	client *wikiFetchClient,
@@ -807,12 +825,15 @@ func runWikiIncrementalUpdate(
 			return counts, 0, 0, "", 0, err
 		}
 		rawName := fmt.Sprintf("recentchanges_%04d.json", recentBatch)
-		if err := os.WriteFile(filepath.Join(rawDir, rawName), raw, 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(rawDir, rawName), raw, privateFileMode); err != nil {
 			return counts, 0, 0, "", 0, err
 		}
 		recentBatch++
 
 		for _, change := range payload.Query.RecentChanges {
+			if change == nil {
+				continue
+			}
 			if change.Timestamp == startTS && change.RCID <= startRCID {
 				continue
 			}
@@ -874,12 +895,15 @@ func runWikiIncrementalUpdate(
 			return counts, 0, 0, "", 0, err
 		}
 		rawName := fmt.Sprintf("update_page_batch_%04d.json", batchIndex)
-		if err := os.WriteFile(filepath.Join(rawDir, rawName), raw, 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(rawDir, rawName), raw, privateFileMode); err != nil {
 			return counts, 0, 0, "", 0, err
 		}
 		batchIndex++
 
 		for _, apiPage := range payload.Query.Pages {
+			if apiPage == nil {
+				continue
+			}
 			if apiPage.PageID <= 0 {
 				continue
 			}
@@ -946,7 +970,7 @@ func runWikiIncrementalUpdate(
 	return counts, eventCount, changedPageCount, cursorTS, cursorRCID, nil
 }
 
-func buildWikiEdges(apiPage wikiAPIPage) []wikiEdgeRecord {
+func buildWikiEdges(apiPage *wikiAPIPage) []wikiEdgeRecord {
 	edges := make([]wikiEdgeRecord, 0, len(apiPage.Categories)+len(apiPage.Templates)+len(apiPage.Links)+len(apiPage.LangLinks))
 	for _, category := range apiPage.Categories {
 		edges = append(edges, wikiEdgeRecord{PageID: apiPage.PageID, EdgeType: "category", Target: category.Title})
@@ -1040,7 +1064,7 @@ func (c *wikiFetchClient) doRequest(ctx context.Context, params map[string]strin
 	requestURL := c.apiBaseURL + "?" + q.Encode()
 	var lastErr error
 	for attempt := 1; attempt <= c.retries; attempt++ {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, http.NoBody)
 		if err != nil {
 			return nil, err
 		}
@@ -1138,11 +1162,11 @@ func getAppMetaValue(ctx context.Context, db *sql.DB, key string) (string, error
 	return value, nil
 }
 
-func resolveUpdateCursor(ctx context.Context, db *sql.DB, sinceOverride string) (string, int, error) {
+func resolveUpdateCursor(ctx context.Context, db *sql.DB, sinceOverride string) (cursorTS string, cursorRCID int, err error) {
 	if strings.TrimSpace(sinceOverride) != "" {
 		ts := strings.TrimSpace(sinceOverride)
-		if _, err := time.Parse(time.RFC3339, ts); err != nil {
-			return "", 0, output.NewError("validation_error", "since must be RFC3339 timestamp", map[string]any{"field": "since", "reason": err.Error()})
+		if _, parseErr := time.Parse(time.RFC3339, ts); parseErr != nil {
+			return "", 0, output.NewError("validation_error", "since must be RFC3339 timestamp", map[string]any{"field": "since", "reason": parseErr.Error()})
 		}
 		return ts, 0, nil
 	}
@@ -1173,16 +1197,16 @@ func resolveUpdateCursor(ctx context.Context, db *sql.DB, sinceOverride string) 
 	return "", 0, output.NewError("not_found", "wiki incremental cursor not initialized; run wiki scrape full first", nil)
 }
 
-func parseCursor(raw string) (string, int, error) {
+func parseCursor(raw string) (ts string, rcid int, err error) {
 	parts := strings.Split(strings.TrimSpace(raw), "|")
 	if len(parts) != 2 {
 		return "", 0, fmt.Errorf("cursor must be <timestamp>|<rcid>")
 	}
-	ts := parts[0]
-	if _, err := time.Parse(time.RFC3339, ts); err != nil {
-		return "", 0, err
+	ts = parts[0]
+	if _, parseErr := time.Parse(time.RFC3339, ts); parseErr != nil {
+		return "", 0, parseErr
 	}
-	rcid, err := strconv.Atoi(parts[1])
+	rcid, err = strconv.Atoi(parts[1])
 	if err != nil {
 		return "", 0, err
 	}
@@ -1226,7 +1250,7 @@ func appendNDJSON(path string, value any) error {
 	}
 	buf = append(buf, '\n')
 
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, privateFileMode)
 	if err != nil {
 		return err
 	}
@@ -1250,8 +1274,8 @@ func verifyLatestRevisionIntegrity(snapshotDir string) error {
 			continue
 		}
 		var rec wikiRevisionRecord
-		if err := json.Unmarshal(line, &rec); err != nil {
-			return err
+		if unmarshalErr := json.Unmarshal(line, &rec); unmarshalErr != nil {
+			return unmarshalErr
 		}
 		revisionIDs[rec.RevisionID] = struct{}{}
 	}
@@ -1285,7 +1309,7 @@ func writeManifest(snapshotDir string, manifest map[string]any) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(manifestPath, append(manifestRaw, '\n'), 0o644)
+	return os.WriteFile(manifestPath, append(manifestRaw, '\n'), privateFileMode)
 }
 
 func collectSnapshotFiles(snapshotDir string) ([]string, error) {
@@ -1376,7 +1400,7 @@ func createWikiSnapshotSkeleton(outDir, snapshotID string, downloadMedia bool) (
 	}
 
 	for _, relPath := range normalizedFiles {
-		if err := os.WriteFile(filepath.Join(root, relPath), nil, 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(root, relPath), nil, privateFileMode); err != nil {
 			return "", err
 		}
 	}
@@ -1397,7 +1421,7 @@ func writeChecksums(snapshotDir string, relPaths []string) error {
 		}
 	}
 
-	return os.WriteFile(filepath.Join(snapshotDir, "checksums.sha256"), []byte(b.String()), 0o644)
+	return os.WriteFile(filepath.Join(snapshotDir, "checksums.sha256"), []byte(b.String()), privateFileMode)
 }
 
 func normalizeNonEmptyValues(raw []string) []string {
@@ -1430,7 +1454,7 @@ func buildCategoryFilter(raw []string) map[string]struct{} {
 	return filter
 }
 
-func matchesCategoryFilter(page wikiAPIPage, filter map[string]struct{}) bool {
+func matchesCategoryFilter(page *wikiAPIPage, filter map[string]struct{}) bool {
 	if len(filter) == 0 {
 		return true
 	}
