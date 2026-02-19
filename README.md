@@ -37,6 +37,8 @@ Manage local wiki snapshots and incremental updates.
 - `scrape update`: fetch recent changes since the stored cursor and write an update snapshot.
 - `clean`: transform normalized wiki revisions into cleaned markdown with YAML frontmatter and domain taxonomy paths.
 - `clean validate`: validate cleaned markdown coverage/integrity/quality gates.
+- `export`: package a snapshot directory into a deterministic zip archive after checksum verification.
+- `export verify`: verify snapshot checksums without creating an archive.
 - `status`: show last snapshot metadata and incremental cursor readiness.
 
 Common workflow:
@@ -56,6 +58,12 @@ Common workflow:
 
 # validate cleaned corpus quality checks
 ./bin/wsh wiki clean validate --snapshot ./data/wiki/<snapshot_id>
+
+# verify snapshot integrity before sharing
+./bin/wsh wiki export verify --snapshot-id <snapshot_id> --wiki-root ./data/wiki
+
+# create deterministic shareable archive
+./bin/wsh wiki export --snapshot-id <snapshot_id> --wiki-root ./data/wiki --out ./dist/<snapshot_id>.zip
 ```
 
 By default, wiki scraping includes namespace `0` and filters to the phase-1 focus categories (skills, activities, recipes, equipment, etc.).

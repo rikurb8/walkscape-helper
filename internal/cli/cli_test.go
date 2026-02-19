@@ -1,11 +1,13 @@
 package cli
 
 import (
+	"archive/zip"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -298,6 +300,9 @@ func TestWikiStatusShowsInitializedCursor(t *testing.T) {
 	if ready, ok := data["incremental_ready"].(bool); !ok || !ready {
 		t.Fatalf("expected incremental_ready=true, got %v", data["incremental_ready"])
 	}
+	if snapshotCount, ok := data["snapshot_count"].(float64); !ok || int(snapshotCount) < 1 {
+		t.Fatalf("expected snapshot_count >= 1, got %v", data["snapshot_count"])
+	}
 }
 
 func TestWikiScrapeUpdateFetchesRecentChanges(t *testing.T) {
@@ -366,6 +371,9 @@ func TestWikiStatusNoSnapshotRecommendsFull(t *testing.T) {
 	}
 	if cmd, ok := data["recommended_next_command"].(string); !ok || cmd != "wiki scrape full" {
 		t.Fatalf("expected recommended_next_command to be wiki scrape full, got %v", data["recommended_next_command"])
+	}
+	if snapshotCount, ok := data["snapshot_count"].(float64); !ok || int(snapshotCount) != 0 {
+		t.Fatalf("expected snapshot_count=0, got %v", data["snapshot_count"])
 	}
 }
 
@@ -495,6 +503,221 @@ func TestWikiCleanValidateFailsWhenFileMissing(t *testing.T) {
 	}
 	if !strings.Contains(out, "validation_error") {
 		t.Fatalf("expected validation_error, got %s", out)
+	}
+}
+
+func TestWikiExportCreatesDeterministicArchive(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	outRoot := filepath.Join(t.TempDir(), "wiki-out")
+	archivePath := filepath.Join(t.TempDir(), "snapshot.zip")
+	api := newWikiMockAPIServer(t)
+	t.Cleanup(api.Close)
+
+	out, _, code := Execute([]string{"wiki", "scrape", "full", "--db-path", dbPath, "--json", "--out", outRoot, "--api-base-url", api.URL, "--rate-limit-rps", "1000"}, nil)
+	if code != 0 {
+		t.Fatalf("wiki scrape full failed: %d %s", code, out)
+	}
+
+	var scrapeResp map[string]any
+	if err := json.Unmarshal([]byte(out), &scrapeResp); err != nil {
+		t.Fatalf("invalid scrape json output: %v", err)
+	}
+	scrapeData, ok := scrapeResp["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected scrape data object")
+	}
+	snapshotID, ok := scrapeData["snapshot_id"].(string)
+	if !ok || snapshotID == "" {
+		t.Fatalf("expected snapshot_id from scrape output")
+	}
+
+	out, _, code = Execute([]string{"wiki", "export", "--db-path", dbPath, "--json", "--snapshot-id", snapshotID, "--wiki-root", outRoot, "--out", archivePath}, nil)
+	if code != 0 {
+		t.Fatalf("wiki export failed: %d %s", code, out)
+	}
+
+	var exportResp map[string]any
+	if err := json.Unmarshal([]byte(out), &exportResp); err != nil {
+		t.Fatalf("invalid export json output: %v", err)
+	}
+	exportData, ok := exportResp["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected export data object")
+	}
+	if gotPath, okPath := exportData["archive_path"].(string); !okPath || gotPath != archivePath {
+		t.Fatalf("expected archive_path %s, got %v", archivePath, exportData["archive_path"])
+	}
+	if _, statErr := os.Stat(archivePath); statErr != nil {
+		t.Fatalf("expected archive file: %v", statErr)
+	}
+
+	zr, err := zip.OpenReader(archivePath)
+	if err != nil {
+		t.Fatalf("failed opening archive: %v", err)
+	}
+	defer zr.Close()
+
+	if len(zr.File) == 0 {
+		t.Fatalf("expected non-empty archive")
+	}
+
+	names := make([]string, 0, len(zr.File))
+	for _, f := range zr.File {
+		names = append(names, f.Name)
+	}
+
+	sortedNames := append([]string{}, names...)
+	sort.Strings(sortedNames)
+	if strings.Join(names, "\n") != strings.Join(sortedNames, "\n") {
+		t.Fatalf("expected deterministic sorted zip entries: %v", names)
+	}
+
+	prefix := snapshotID + "/"
+	hasManifest := false
+	hasChecksums := false
+	for _, name := range names {
+		if name == prefix+"manifest.json" {
+			hasManifest = true
+		}
+		if name == prefix+"checksums.sha256" {
+			hasChecksums = true
+		}
+	}
+	if !hasManifest || !hasChecksums {
+		t.Fatalf("expected manifest and checksums in archive entries: %v", names)
+	}
+}
+
+func TestWikiExportFailsWhenSnapshotNotFound(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	outRoot := filepath.Join(t.TempDir(), "wiki-out")
+	archivePath := filepath.Join(t.TempDir(), "snapshot.zip")
+
+	out, _, code := Execute([]string{"wiki", "export", "--db-path", dbPath, "--json", "--snapshot-id", "missing", "--wiki-root", outRoot, "--out", archivePath}, nil)
+	if code != 3 {
+		t.Fatalf("expected not_found code 3, got %d: %s", code, out)
+	}
+	if !strings.Contains(out, "not_found") {
+		t.Fatalf("expected not_found response, got %s", out)
+	}
+}
+
+func TestWikiExportFailsOnChecksumMismatch(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	outRoot := filepath.Join(t.TempDir(), "wiki-out")
+	archivePath := filepath.Join(t.TempDir(), "snapshot.zip")
+	api := newWikiMockAPIServer(t)
+	t.Cleanup(api.Close)
+
+	out, _, code := Execute([]string{"wiki", "scrape", "full", "--db-path", dbPath, "--json", "--out", outRoot, "--api-base-url", api.URL, "--rate-limit-rps", "1000"}, nil)
+	if code != 0 {
+		t.Fatalf("wiki scrape full failed: %d %s", code, out)
+	}
+
+	var scrapeResp map[string]any
+	if err := json.Unmarshal([]byte(out), &scrapeResp); err != nil {
+		t.Fatalf("invalid scrape json output: %v", err)
+	}
+	scrapeData, ok := scrapeResp["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected scrape data object")
+	}
+	snapshotID, ok := scrapeData["snapshot_id"].(string)
+	if !ok || snapshotID == "" {
+		t.Fatalf("expected snapshot_id from scrape output")
+	}
+
+	manifestPath := filepath.Join(outRoot, snapshotID, "manifest.json")
+	if err := os.WriteFile(manifestPath, []byte("{}\n"), 0o600); err != nil {
+		t.Fatalf("failed to mutate manifest for mismatch: %v", err)
+	}
+
+	out, _, code = Execute([]string{"wiki", "export", "--db-path", dbPath, "--json", "--snapshot-id", snapshotID, "--wiki-root", outRoot, "--out", archivePath}, nil)
+	if code != 2 {
+		t.Fatalf("expected validation error code 2, got %d: %s", code, out)
+	}
+	if !strings.Contains(out, "checksum mismatch") {
+		t.Fatalf("expected checksum mismatch error, got %s", out)
+	}
+}
+
+func TestWikiExportVerifyPassesOnValidSnapshot(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	outRoot := filepath.Join(t.TempDir(), "wiki-out")
+	api := newWikiMockAPIServer(t)
+	t.Cleanup(api.Close)
+
+	out, _, code := Execute([]string{"wiki", "scrape", "full", "--db-path", dbPath, "--json", "--out", outRoot, "--api-base-url", api.URL, "--rate-limit-rps", "1000"}, nil)
+	if code != 0 {
+		t.Fatalf("wiki scrape full failed: %d %s", code, out)
+	}
+
+	var scrapeResp map[string]any
+	if err := json.Unmarshal([]byte(out), &scrapeResp); err != nil {
+		t.Fatalf("invalid scrape json output: %v", err)
+	}
+	scrapeData, ok := scrapeResp["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected scrape data object")
+	}
+	snapshotID, ok := scrapeData["snapshot_id"].(string)
+	if !ok || snapshotID == "" {
+		t.Fatalf("expected snapshot_id from scrape output")
+	}
+
+	out, _, code = Execute([]string{"wiki", "export", "verify", "--db-path", dbPath, "--json", "--snapshot-id", snapshotID, "--wiki-root", outRoot}, nil)
+	if code != 0 {
+		t.Fatalf("wiki export verify failed: %d %s", code, out)
+	}
+
+	var verifyResp map[string]any
+	if err := json.Unmarshal([]byte(out), &verifyResp); err != nil {
+		t.Fatalf("invalid verify json output: %v", err)
+	}
+	verifyData, ok := verifyResp["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected verify data object")
+	}
+	if checksumsOK, ok := verifyData["checksums_ok"].(bool); !ok || !checksumsOK {
+		t.Fatalf("expected checksums_ok=true, got %v", verifyData["checksums_ok"])
+	}
+}
+
+func TestWikiExportVerifyFailsOnChecksumMismatch(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	outRoot := filepath.Join(t.TempDir(), "wiki-out")
+	api := newWikiMockAPIServer(t)
+	t.Cleanup(api.Close)
+
+	out, _, code := Execute([]string{"wiki", "scrape", "full", "--db-path", dbPath, "--json", "--out", outRoot, "--api-base-url", api.URL, "--rate-limit-rps", "1000"}, nil)
+	if code != 0 {
+		t.Fatalf("wiki scrape full failed: %d %s", code, out)
+	}
+
+	var scrapeResp map[string]any
+	if err := json.Unmarshal([]byte(out), &scrapeResp); err != nil {
+		t.Fatalf("invalid scrape json output: %v", err)
+	}
+	scrapeData, ok := scrapeResp["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected scrape data object")
+	}
+	snapshotID, ok := scrapeData["snapshot_id"].(string)
+	if !ok || snapshotID == "" {
+		t.Fatalf("expected snapshot_id from scrape output")
+	}
+
+	manifestPath := filepath.Join(outRoot, snapshotID, "manifest.json")
+	if err := os.WriteFile(manifestPath, []byte("{}\n"), 0o600); err != nil {
+		t.Fatalf("failed to mutate manifest for mismatch: %v", err)
+	}
+
+	out, _, code = Execute([]string{"wiki", "export", "verify", "--db-path", dbPath, "--json", "--snapshot-id", snapshotID, "--wiki-root", outRoot}, nil)
+	if code != 2 {
+		t.Fatalf("expected validation error code 2, got %d: %s", code, out)
+	}
+	if !strings.Contains(out, "checksum mismatch") {
+		t.Fatalf("expected checksum mismatch error, got %s", out)
 	}
 }
 

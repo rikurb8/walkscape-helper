@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -186,6 +187,7 @@ func newWikiCmd() *cobra.Command {
 
 	cmd.AddCommand(newWikiScrapeCmd())
 	cmd.AddCommand(newWikiCleanCmd())
+	cmd.AddCommand(newWikiExportCmd())
 	cmd.AddCommand(newWikiStatusCmd())
 
 	return cmd
@@ -200,6 +202,121 @@ func newWikiScrapeCmd() *cobra.Command {
 
 	cmd.AddCommand(newWikiScrapeFullCmd())
 	cmd.AddCommand(newWikiScrapeUpdateCmd())
+
+	return cmd
+}
+
+func newWikiExportCmd() *cobra.Command {
+	var snapshotID string
+	var outPath string
+	var wikiRoot string
+
+	cmd := &cobra.Command{
+		Use:   "export",
+		Short: "Package a snapshot as zip",
+		Long:  "Create a deterministic zip archive from a local wiki snapshot after checksum verification.",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx := contextFromCommand(cmd)
+
+			snapshotID = strings.TrimSpace(snapshotID)
+			if snapshotID == "" {
+				return writeErr(cmd, ctx.JSON, "wiki export", output.NewError("validation_error", "snapshot-id is required", map[string]any{"field": "snapshot-id"}))
+			}
+
+			resolvedOut := strings.TrimSpace(outPath)
+			if resolvedOut == "" {
+				resolvedOut = filepath.Join(".", snapshotID+".zip")
+			}
+
+			snapshotDir, err := resolveWikiSnapshotDir(wikiRoot, snapshotID)
+			if err != nil {
+				return writeErr(cmd, ctx.JSON, "wiki export", err)
+			}
+
+			checksumErr := verifyChecksums(snapshotDir)
+			if checksumErr != nil {
+				return writeErr(cmd, ctx.JSON, "wiki export", checksumErr)
+			}
+
+			mkdirErr := os.MkdirAll(filepath.Dir(resolvedOut), 0o755)
+			if mkdirErr != nil {
+				return writeErr(cmd, ctx.JSON, "wiki export", output.NewError("storage_error", "failed creating export output directory", map[string]any{"reason": mkdirErr.Error()}))
+			}
+
+			fileCount, bytesWritten, err := createDeterministicSnapshotZip(snapshotDir, resolvedOut)
+			if err != nil {
+				return writeErr(cmd, ctx.JSON, "wiki export", output.NewError("storage_error", "failed creating snapshot zip", map[string]any{"reason": err.Error(), "snapshot_dir": snapshotDir}))
+			}
+
+			if ctx.JSON {
+				return output.WriteJSONSuccess(cmd.OutOrStdout(), map[string]any{
+					"snapshot_id":   snapshotID,
+					"snapshot_dir":  snapshotDir,
+					"archive_path":  resolvedOut,
+					"archive_bytes": bytesWritten,
+					"file_count":    fileCount,
+				}, commandMeta("wiki export"))
+			}
+
+			if err := output.WriteHuman(cmd.OutOrStdout(), "Exported snapshot %s", snapshotID); err != nil {
+				return err
+			}
+			if err := output.WriteHuman(cmd.OutOrStdout(), "Archive: %s", resolvedOut); err != nil {
+				return err
+			}
+			return output.WriteHuman(cmd.OutOrStdout(), "Files: %d Size: %d bytes", fileCount, bytesWritten)
+		},
+	}
+
+	cmd.Flags().StringVar(&snapshotID, "snapshot-id", "", "snapshot id to export")
+	cmd.Flags().StringVar(&outPath, "out", "", "output zip file path (defaults to ./<snapshot-id>.zip)")
+	cmd.Flags().StringVar(&wikiRoot, "wiki-root", filepath.Join(".", "data", "wiki"), "wiki snapshot root directory")
+	cmd.AddCommand(newWikiExportVerifyCmd())
+
+	return cmd
+}
+
+func newWikiExportVerifyCmd() *cobra.Command {
+	var snapshotID string
+	var wikiRoot string
+
+	cmd := &cobra.Command{
+		Use:   "verify",
+		Short: "Verify snapshot checksums",
+		Long:  "Verify checksums.sha256 integrity for a local wiki snapshot without creating a zip archive.",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx := contextFromCommand(cmd)
+
+			snapshotID = strings.TrimSpace(snapshotID)
+			if snapshotID == "" {
+				return writeErr(cmd, ctx.JSON, "wiki export verify", output.NewError("validation_error", "snapshot-id is required", map[string]any{"field": "snapshot-id"}))
+			}
+
+			snapshotDir, err := resolveWikiSnapshotDir(wikiRoot, snapshotID)
+			if err != nil {
+				return writeErr(cmd, ctx.JSON, "wiki export verify", err)
+			}
+
+			if err := verifyChecksums(snapshotDir); err != nil {
+				return writeErr(cmd, ctx.JSON, "wiki export verify", err)
+			}
+
+			if ctx.JSON {
+				return output.WriteJSONSuccess(cmd.OutOrStdout(), map[string]any{
+					"snapshot_id":  snapshotID,
+					"snapshot_dir": snapshotDir,
+					"checksums_ok": true,
+				}, commandMeta("wiki export verify"))
+			}
+
+			return output.WriteHuman(cmd.OutOrStdout(), "Checksums verified for snapshot %s", snapshotID)
+		},
+	}
+
+	cmd.Flags().StringVar(&snapshotID, "snapshot-id", "", "snapshot id to verify")
+	cmd.Flags().StringVar(&wikiRoot, "wiki-root", filepath.Join(".", "data", "wiki"), "wiki snapshot root directory")
 
 	return cmd
 }
@@ -247,24 +364,41 @@ func newWikiStatusCmd() *cobra.Command {
 			}
 
 			result := map[string]any{
-				"last_full_snapshot_id":    lastSnapshotID,
-				"last_sync_ts":             lastSyncTS,
-				"recentchanges_cursor":     recentChangesCursor,
-				"wiki_data_root":           outDir,
-				"last_snapshot_manifest":   nil,
-				"last_snapshot_found":      false,
-				"incremental_ready":        incrementalReady,
-				"recommended_next_command": recommendedNext,
+				"last_full_snapshot_id":     lastSnapshotID,
+				"last_sync_ts":              lastSyncTS,
+				"recentchanges_cursor":      recentChangesCursor,
+				"wiki_data_root":            outDir,
+				"snapshot_count":            0,
+				"snapshot_ids":              []string{},
+				"last_snapshot_path":        "",
+				"last_snapshot_checksums":   false,
+				"last_snapshot_manifest_ok": false,
+				"last_snapshot_manifest":    nil,
+				"last_snapshot_found":       false,
+				"incremental_ready":         incrementalReady,
+				"recommended_next_command":  recommendedNext,
+			}
+
+			snapshotIDs, listErr := listSnapshotIDs(outDir)
+			if listErr == nil {
+				result["snapshot_count"] = len(snapshotIDs)
+				result["snapshot_ids"] = snapshotIDs
 			}
 
 			if lastSnapshotID != "" {
 				manifestPath := filepath.Join(outDir, lastSnapshotID, "manifest.json")
+				checksumsPath := filepath.Join(outDir, lastSnapshotID, "checksums.sha256")
+				result["last_snapshot_path"] = filepath.Join(outDir, lastSnapshotID)
+				if _, statErr := os.Stat(checksumsPath); statErr == nil {
+					result["last_snapshot_checksums"] = true
+				}
 				manifestRaw, readErr := os.ReadFile(manifestPath)
 				if readErr == nil {
 					var manifest map[string]any
 					if unmarshalErr := json.Unmarshal(manifestRaw, &manifest); unmarshalErr == nil {
 						result["last_snapshot_manifest"] = manifest
 						result["last_snapshot_found"] = true
+						result["last_snapshot_manifest_ok"] = true
 					}
 				}
 			}
@@ -287,6 +421,11 @@ func newWikiStatusCmd() *cobra.Command {
 			}
 			if err := output.WriteHuman(cmd.OutOrStdout(), "Recentchanges cursor: %s", valueOrUnset(recentChangesCursor)); err != nil {
 				return err
+			}
+			if snapshotCount, ok := result["snapshot_count"].(int); ok {
+				if err := output.WriteHuman(cmd.OutOrStdout(), "Snapshots found: %d", snapshotCount); err != nil {
+					return err
+				}
 			}
 			if ready, readyOK := result["incremental_ready"].(bool); readyOK && ready {
 				return output.WriteHuman(cmd.OutOrStdout(), "Incremental update is ready")
@@ -1314,6 +1453,10 @@ func writeManifest(snapshotDir string, manifest map[string]any) error {
 }
 
 func collectSnapshotFiles(snapshotDir string) ([]string, error) {
+	return collectSnapshotFilesWithOptions(snapshotDir, true)
+}
+
+func collectSnapshotFilesWithOptions(snapshotDir string, excludeChecksums bool) ([]string, error) {
 	files := make([]string, 0, 64)
 	err := filepath.WalkDir(snapshotDir, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -1326,7 +1469,7 @@ func collectSnapshotFiles(snapshotDir string) ([]string, error) {
 		if err != nil {
 			return err
 		}
-		if rel == "checksums.sha256" {
+		if excludeChecksums && rel == "checksums.sha256" {
 			return nil
 		}
 		files = append(files, rel)
@@ -1337,6 +1480,130 @@ func collectSnapshotFiles(snapshotDir string) ([]string, error) {
 	}
 	sort.Strings(files)
 	return files, nil
+}
+
+func verifyChecksums(snapshotDir string) error {
+	checksumsPath := filepath.Join(snapshotDir, "checksums.sha256")
+	raw, err := os.ReadFile(checksumsPath)
+	if err != nil {
+		return output.NewError("not_found", "checksums file not found", map[string]any{"path": checksumsPath, "reason": err.Error()})
+	}
+
+	lines := strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n")
+	for idx, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "  ", 2)
+		if len(parts) != 2 {
+			return output.NewError("validation_error", "invalid checksum line format", map[string]any{"line": idx + 1})
+		}
+		expected := strings.TrimSpace(parts[0])
+		relPath := strings.TrimSpace(parts[1])
+		if expected == "" || relPath == "" {
+			return output.NewError("validation_error", "invalid checksum entry", map[string]any{"line": idx + 1})
+		}
+
+		content, readErr := os.ReadFile(filepath.Join(snapshotDir, relPath))
+		if readErr != nil {
+			return output.NewError("validation_error", "checksummed file missing", map[string]any{"path": relPath, "reason": readErr.Error()})
+		}
+		sum := sha256.Sum256(content)
+		actual := hex.EncodeToString(sum[:])
+		if !strings.EqualFold(actual, expected) {
+			return output.NewError("validation_error", "checksum mismatch", map[string]any{"path": relPath, "expected": expected, "actual": actual})
+		}
+	}
+
+	return nil
+}
+
+func createDeterministicSnapshotZip(snapshotDir, zipPath string) (fileCount int, archiveBytes int64, err error) {
+	files, err := collectSnapshotFilesWithOptions(snapshotDir, false)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	outFile, err := os.Create(zipPath)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer outFile.Close()
+
+	zipWriter := zip.NewWriter(outFile)
+	baseName := filepath.Base(snapshotDir)
+	fixedTime := time.Date(1980, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	for _, relPath := range files {
+		absPath := filepath.Join(snapshotDir, relPath)
+		content, readErr := os.ReadFile(absPath)
+		if readErr != nil {
+			_ = zipWriter.Close()
+			return 0, 0, readErr
+		}
+
+		header := &zip.FileHeader{Name: filepath.ToSlash(filepath.Join(baseName, relPath)), Method: zip.Deflate}
+		header.Modified = fixedTime
+		header.SetMode(privateFileMode)
+
+		entry, createErr := zipWriter.CreateHeader(header)
+		if createErr != nil {
+			_ = zipWriter.Close()
+			return 0, 0, createErr
+		}
+		if _, writeErr := entry.Write(content); writeErr != nil {
+			_ = zipWriter.Close()
+			return 0, 0, writeErr
+		}
+	}
+
+	closeErr := zipWriter.Close()
+	if closeErr != nil {
+		return 0, 0, closeErr
+	}
+
+	stat, err := outFile.Stat()
+	if err != nil {
+		return len(files), 0, err
+	}
+
+	return len(files), stat.Size(), nil
+}
+
+func listSnapshotIDs(outDir string) ([]string, error) {
+	entries, err := os.ReadDir(outDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []string{}, nil
+		}
+		return nil, err
+	}
+
+	ids := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		ids = append(ids, entry.Name())
+	}
+	sort.Strings(ids)
+
+	return ids, nil
+}
+
+func resolveWikiSnapshotDir(wikiRoot, snapshotID string) (string, error) {
+	snapshotDir := filepath.Join(wikiRoot, snapshotID)
+	info, err := os.Stat(snapshotDir)
+	if err != nil || !info.IsDir() {
+		detail := map[string]any{"path": snapshotDir}
+		if err != nil {
+			detail["reason"] = err.Error()
+		}
+		return "", output.NewError("not_found", "snapshot directory not found", detail)
+	}
+
+	return snapshotDir, nil
 }
 
 func parseNamespaceIDs(raw []string) ([]int, error) {
