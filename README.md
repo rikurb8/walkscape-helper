@@ -35,6 +35,8 @@ Manage local wiki snapshots and incremental updates.
 
 - `scrape full`: fetch a full snapshot (raw API payloads + normalized NDJSON) into `data/wiki/<snapshot_id>/`.
 - `scrape update`: fetch recent changes since the stored cursor and write an update snapshot.
+- `clean`: transform normalized wiki revisions into cleaned markdown with YAML frontmatter and domain taxonomy paths.
+- `clean validate`: validate cleaned markdown coverage/integrity/quality gates.
 - `status`: show last snapshot metadata and incremental cursor readiness.
 
 Common workflow:
@@ -48,6 +50,12 @@ Common workflow:
 
 # incremental refresh
 ./bin/wsh wiki scrape update --out ./data/wiki
+
+# clean snapshot into markdown corpus
+./bin/wsh wiki clean --snapshot ./data/wiki/<snapshot_id>
+
+# validate cleaned corpus quality checks
+./bin/wsh wiki clean validate --snapshot ./data/wiki/<snapshot_id>
 ```
 
 By default, wiki scraping includes namespace `0` and filters to the phase-1 focus categories (skills, activities, recipes, equipment, etc.).

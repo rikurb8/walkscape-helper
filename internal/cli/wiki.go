@@ -185,6 +185,7 @@ func newWikiCmd() *cobra.Command {
 	}
 
 	cmd.AddCommand(newWikiScrapeCmd())
+	cmd.AddCommand(newWikiCleanCmd())
 	cmd.AddCommand(newWikiStatusCmd())
 
 	return cmd

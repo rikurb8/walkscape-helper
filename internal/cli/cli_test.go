@@ -369,6 +369,135 @@ func TestWikiStatusNoSnapshotRecommendsFull(t *testing.T) {
 	}
 }
 
+func TestWikiCleanCreatesDomainMarkdownAndValidatePasses(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	outRoot := filepath.Join(t.TempDir(), "wiki-out")
+	api := newWikiMockAPIServer(t)
+	t.Cleanup(api.Close)
+
+	out, _, code := Execute([]string{"wiki", "scrape", "full", "--db-path", dbPath, "--json", "--out", outRoot, "--api-base-url", api.URL, "--rate-limit-rps", "1000"}, nil)
+	if code != 0 {
+		t.Fatalf("wiki scrape full failed: %d %s", code, out)
+	}
+
+	var scrapeResp map[string]any
+	if err := json.Unmarshal([]byte(out), &scrapeResp); err != nil {
+		t.Fatalf("invalid scrape json output: %v", err)
+	}
+	scrapeData, ok := scrapeResp["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected scrape data object")
+	}
+	snapshotDir, ok := scrapeData["snapshot_dir"].(string)
+	if !ok || snapshotDir == "" {
+		t.Fatalf("expected snapshot_dir from scrape output")
+	}
+
+	out, _, code = Execute([]string{"wiki", "clean", "--db-path", dbPath, "--json", "--snapshot", snapshotDir}, nil)
+	if code != 0 {
+		t.Fatalf("wiki clean failed: %d %s", code, out)
+	}
+
+	var cleanResp map[string]any
+	if err := json.Unmarshal([]byte(out), &cleanResp); err != nil {
+		t.Fatalf("invalid clean json output: %v", err)
+	}
+	cleanData, ok := cleanResp["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected clean data object")
+	}
+	if pages, okPages := cleanData["cleaned_pages"].(float64); !okPages || int(pages) != 2 {
+		t.Fatalf("expected cleaned_pages=2, got %v", cleanData["cleaned_pages"])
+	}
+	cleanedRecordsPath, ok := cleanData["cleaned_records"].(string)
+	if !ok || cleanedRecordsPath == "" {
+		t.Fatalf("expected cleaned_records path, got %v", cleanData["cleaned_records"])
+	}
+
+	recordsRaw, err := os.ReadFile(cleanedRecordsPath)
+	if err != nil {
+		t.Fatalf("failed reading cleaned records: %v", err)
+	}
+	if !strings.Contains(string(recordsRaw), `"domain_topic":"skills"`) {
+		t.Fatalf("expected cleaned records to contain skills taxonomy topic: %s", recordsRaw)
+	}
+
+	skillsMarkdown := filepath.Join(snapshotDir, "cleaned", "markdown", "ns0", "game-mechanics", "skills", "Skills.md")
+	skillsRaw, err := os.ReadFile(skillsMarkdown)
+	if err != nil {
+		t.Fatalf("failed reading skills markdown: %v", err)
+	}
+	if !strings.Contains(string(skillsRaw), "domain_topic: \"skills\"") {
+		t.Fatalf("expected skills markdown frontmatter to include domain_topic: %s", skillsRaw)
+	}
+	if !strings.Contains(string(skillsRaw), "## Skills") {
+		t.Fatalf("expected converted markdown header in skills markdown: %s", skillsRaw)
+	}
+
+	out, _, code = Execute([]string{"wiki", "clean", "validate", "--db-path", dbPath, "--json", "--snapshot", snapshotDir}, nil)
+	if code != 0 {
+		t.Fatalf("wiki clean validate failed: %d %s", code, out)
+	}
+
+	var validateResp map[string]any
+	if err := json.Unmarshal([]byte(out), &validateResp); err != nil {
+		t.Fatalf("invalid validate json output: %v", err)
+	}
+	validateData, ok := validateResp["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected validate data object")
+	}
+	coverage, ok := validateData["coverage"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected coverage object")
+	}
+	if eligible, ok := coverage["eligible_pages"].(float64); !ok || int(eligible) != 2 {
+		t.Fatalf("expected eligible_pages=2, got %v", coverage["eligible_pages"])
+	}
+}
+
+func TestWikiCleanValidateFailsWhenFileMissing(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	outRoot := filepath.Join(t.TempDir(), "wiki-out")
+	api := newWikiMockAPIServer(t)
+	t.Cleanup(api.Close)
+
+	out, _, code := Execute([]string{"wiki", "scrape", "full", "--db-path", dbPath, "--json", "--out", outRoot, "--api-base-url", api.URL, "--rate-limit-rps", "1000"}, nil)
+	if code != 0 {
+		t.Fatalf("wiki scrape full failed: %d %s", code, out)
+	}
+
+	var scrapeResp map[string]any
+	if err := json.Unmarshal([]byte(out), &scrapeResp); err != nil {
+		t.Fatalf("invalid scrape json output: %v", err)
+	}
+	scrapeData, ok := scrapeResp["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected scrape data object")
+	}
+	snapshotDir, ok := scrapeData["snapshot_dir"].(string)
+	if !ok || snapshotDir == "" {
+		t.Fatalf("expected snapshot_dir from scrape output")
+	}
+
+	out, _, code = Execute([]string{"wiki", "clean", "--db-path", dbPath, "--json", "--snapshot", snapshotDir}, nil)
+	if code != 0 {
+		t.Fatalf("wiki clean failed: %d %s", code, out)
+	}
+
+	if err := os.Remove(filepath.Join(snapshotDir, "cleaned", "markdown", "ns0", "game-mechanics", "skills", "Skills.md")); err != nil {
+		t.Fatalf("failed deleting cleaned markdown fixture: %v", err)
+	}
+
+	out, _, code = Execute([]string{"wiki", "clean", "validate", "--db-path", dbPath, "--json", "--snapshot", snapshotDir}, nil)
+	if code != 2 {
+		t.Fatalf("expected validation error exit code 2, got %d: %s", code, out)
+	}
+	if !strings.Contains(out, "validation_error") {
+		t.Fatalf("expected validation_error, got %s", out)
+	}
+}
+
 func newWikiMockAPIServer(t *testing.T) *httptest.Server {
 	t.Helper()
 
