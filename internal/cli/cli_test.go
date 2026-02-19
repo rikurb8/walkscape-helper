@@ -2,6 +2,9 @@ package cli
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -168,4 +171,243 @@ func TestCompletionCommand(t *testing.T) {
 	if !strings.Contains(out, "__start_wsh") {
 		t.Fatalf("expected bash completion script output")
 	}
+}
+
+func TestWikiScrapeFullCreatesSnapshotSkeletonJSON(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	outRoot := filepath.Join(t.TempDir(), "wiki-out")
+	api := newWikiMockAPIServer(t)
+	t.Cleanup(api.Close)
+
+	out, _, code := Execute([]string{"wiki", "scrape", "full", "--db-path", dbPath, "--json", "--out", outRoot, "--api-base-url", api.URL, "--rate-limit-rps", "1000"}, nil)
+	if code != 0 {
+		t.Fatalf("wiki scrape full failed: %d %s", code, out)
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("invalid json output: %v", err)
+	}
+	data, ok := resp["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected data object, got %T", resp["data"])
+	}
+	namespaces, ok := data["namespaces"].([]any)
+	if !ok {
+		t.Fatalf("expected namespaces array, got %T", data["namespaces"])
+	}
+	if len(namespaces) != 1 {
+		t.Fatalf("expected one default namespace, got %d (%v)", len(namespaces), namespaces)
+	}
+	if ns, ok := namespaces[0].(float64); !ok || int(ns) != 0 {
+		t.Fatalf("expected default namespace 0, got %v", namespaces[0])
+	}
+	snapshotDir, ok := data["snapshot_dir"].(string)
+	if !ok || snapshotDir == "" {
+		t.Fatalf("expected snapshot_dir in response, got %v", data["snapshot_dir"])
+	}
+	counts, ok := data["counts"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected counts object, got %T", data["counts"])
+	}
+	if pages, ok := counts["wiki_pages"].(float64); !ok || int(pages) != 2 {
+		t.Fatalf("expected wiki_pages count 2, got %v", counts["wiki_pages"])
+	}
+
+	expectedPaths := []string{
+		filepath.Join(snapshotDir, "manifest.json"),
+		filepath.Join(snapshotDir, "checksums.sha256"),
+		filepath.Join(snapshotDir, "raw", "api", filepath.Base(snapshotDir)),
+		filepath.Join(snapshotDir, "normalized", "wiki_pages.ndjson"),
+		filepath.Join(snapshotDir, "normalized", "wiki_revisions.ndjson"),
+		filepath.Join(snapshotDir, "normalized", "wiki_page_edges.ndjson"),
+		filepath.Join(snapshotDir, "normalized", "wiki_files.ndjson"),
+		filepath.Join(snapshotDir, "normalized", "wiki_tombstones.ndjson"),
+	}
+
+	for _, p := range expectedPaths {
+		if _, err := os.Stat(p); err != nil {
+			t.Fatalf("expected %s to exist: %v", p, err)
+		}
+	}
+}
+
+func TestWikiScrapeFullRejectsInvalidNamespace(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	out, _, code := Execute([]string{"wiki", "scrape", "full", "--db-path", dbPath, "--json", "--namespaces", "abc"}, nil)
+	if code != 2 {
+		t.Fatalf("expected code 2, got %d: %s", code, out)
+	}
+	if !strings.Contains(out, "validation_error") {
+		t.Fatalf("expected validation_error in output: %s", out)
+	}
+}
+
+func TestWikiScrapeFullAppliesCategoryFilter(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	outRoot := filepath.Join(t.TempDir(), "wiki-out")
+	api := newWikiMockAPIServer(t)
+	t.Cleanup(api.Close)
+
+	out, _, code := Execute([]string{"wiki", "scrape", "full", "--db-path", dbPath, "--json", "--out", outRoot, "--api-base-url", api.URL, "--rate-limit-rps", "1000", "--include-categories", "Nonexistent Category"}, nil)
+	if code != 0 {
+		t.Fatalf("wiki scrape full failed: %d %s", code, out)
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("invalid json output: %v", err)
+	}
+	data, ok := resp["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected data object")
+	}
+	counts, ok := data["counts"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected counts object")
+	}
+	if pages, ok := counts["wiki_pages"].(float64); !ok || int(pages) != 0 {
+		t.Fatalf("expected wiki_pages count 0, got %v", counts["wiki_pages"])
+	}
+}
+
+func TestWikiStatusShowsInitializedCursor(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	outRoot := filepath.Join(t.TempDir(), "wiki-out")
+	api := newWikiMockAPIServer(t)
+	t.Cleanup(api.Close)
+
+	_, _, code := Execute([]string{"wiki", "scrape", "full", "--db-path", dbPath, "--json", "--out", outRoot, "--api-base-url", api.URL, "--rate-limit-rps", "1000"}, nil)
+	if code != 0 {
+		t.Fatalf("wiki scrape full failed")
+	}
+
+	out, _, code := Execute([]string{"wiki", "status", "--db-path", dbPath, "--out", outRoot, "--json"}, nil)
+	if code != 0 {
+		t.Fatalf("wiki status failed: %d %s", code, out)
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("invalid status json: %v", err)
+	}
+	data, ok := resp["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected data object")
+	}
+	if ready, ok := data["incremental_ready"].(bool); !ok || !ready {
+		t.Fatalf("expected incremental_ready=true, got %v", data["incremental_ready"])
+	}
+}
+
+func TestWikiScrapeUpdateFetchesRecentChanges(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	outRoot := filepath.Join(t.TempDir(), "wiki-out")
+	api := newWikiMockAPIServer(t)
+	t.Cleanup(api.Close)
+
+	_, _, code := Execute([]string{"wiki", "scrape", "full", "--db-path", dbPath, "--json", "--out", outRoot, "--api-base-url", api.URL, "--rate-limit-rps", "1000"}, nil)
+	if code != 0 {
+		t.Fatalf("wiki scrape full failed")
+	}
+
+	out, _, code := Execute([]string{"wiki", "scrape", "update", "--db-path", dbPath, "--json", "--out", outRoot, "--api-base-url", api.URL, "--rate-limit-rps", "1000", "--since", "2026-02-19T00:00:00Z"}, nil)
+	if code != 0 {
+		t.Fatalf("wiki scrape update failed: %d %s", code, out)
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("invalid update json: %v", err)
+	}
+	data, ok := resp["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected data object")
+	}
+	if events, ok := data["event_count"].(float64); !ok || int(events) < 1 {
+		t.Fatalf("expected event_count >= 1, got %v", data["event_count"])
+	}
+	if changedPages, ok := data["changed_page_count"].(float64); !ok || int(changedPages) != 1 {
+		t.Fatalf("expected changed_page_count to be deduped to 1, got %v", data["changed_page_count"])
+	}
+}
+
+func TestWikiScrapeUpdateRequiresInitializedCursor(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	outRoot := filepath.Join(t.TempDir(), "wiki-out")
+	api := newWikiMockAPIServer(t)
+	t.Cleanup(api.Close)
+
+	out, _, code := Execute([]string{"wiki", "scrape", "update", "--db-path", dbPath, "--json", "--out", outRoot, "--api-base-url", api.URL}, nil)
+	if code != 3 {
+		t.Fatalf("expected code 3, got %d: %s", code, out)
+	}
+	if !strings.Contains(out, "not_found") {
+		t.Fatalf("expected not_found response, got %s", out)
+	}
+}
+
+func TestWikiStatusNoSnapshotRecommendsFull(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	outRoot := filepath.Join(t.TempDir(), "wiki-out")
+
+	out, _, code := Execute([]string{"wiki", "status", "--db-path", dbPath, "--out", outRoot, "--json"}, nil)
+	if code != 0 {
+		t.Fatalf("wiki status failed: %d %s", code, out)
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("invalid status json: %v", err)
+	}
+	data, ok := resp["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected data object")
+	}
+	if cmd, ok := data["recommended_next_command"].(string); !ok || cmd != "wiki scrape full" {
+		t.Fatalf("expected recommended_next_command to be wiki scrape full, got %v", data["recommended_next_command"])
+	}
+}
+
+func newWikiMockAPIServer(t *testing.T) *httptest.Server {
+	t.Helper()
+
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if q.Get("action") != "query" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"invalid action"}`))
+			return
+		}
+
+		if q.Get("list") == "allpages" {
+			_, _ = w.Write([]byte(`{"batchcomplete":"","query":{"allpages":[{"pageid":1,"ns":0,"title":"Skills"},{"pageid":2,"ns":0,"title":"Activities"}]}}`))
+			return
+		}
+
+		if q.Get("list") == "recentchanges" {
+			_, _ = w.Write([]byte(`{"batchcomplete":"","query":{"recentchanges":[{"rcid":200,"type":"edit","ns":0,"title":"Skills","pageid":1,"revid":103,"old_revid":101,"timestamp":"2026-02-19T00:02:00Z","comment":"update"}]}}`))
+			return
+		}
+
+		if q.Get("prop") != "" {
+			titles := q.Get("titles")
+			skills := `"1":{"pageid":1,"ns":0,"title":"Skills","fullurl":"https://wiki.walkscape.app/wiki/Skills","revisions":[{"revid":101,"parentid":100,"timestamp":"2026-02-19T00:00:00Z","sha1":"abc","size":123,"comment":"seed","slots":{"main":{"contentmodel":"wikitext","*":"== Skills ==\ntext"}}}],"categories":[{"title":"Category:Skills"}],"templates":[{"title":"Template:Infobox"}],"links":[{"title":"Activities"}],"langlinks":[{"lang":"en","*":"Skills"}]}`
+			activities := `"2":{"pageid":2,"ns":0,"title":"Activities","fullurl":"https://wiki.walkscape.app/wiki/Activities","revisions":[{"revid":102,"parentid":101,"timestamp":"2026-02-19T00:01:00Z","sha1":"def","size":99,"comment":"seed","slots":{"main":{"contentmodel":"wikitext","*":"== Activities ==\ntext"}}}],"categories":[{"title":"Category:Activities"}],"templates":[],"links":[],"langlinks":[]}`
+			switch {
+			case strings.Contains(titles, "Skills") && strings.Contains(titles, "Activities"):
+				_, _ = w.Write([]byte(`{"batchcomplete":"","query":{"pages":{` + skills + `,` + activities + `}}}`))
+			case strings.Contains(titles, "Skills"):
+				_, _ = w.Write([]byte(`{"batchcomplete":"","query":{"pages":{` + skills + `}}}`))
+			case strings.Contains(titles, "Activities"):
+				_, _ = w.Write([]byte(`{"batchcomplete":"","query":{"pages":{` + activities + `}}}`))
+			default:
+				_, _ = w.Write([]byte(`{"batchcomplete":"","query":{"pages":{}}}`))
+			}
+			return
+		}
+
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"unsupported"}`))
+	}))
 }

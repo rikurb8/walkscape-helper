@@ -327,3 +327,34 @@ func TestBuildDSN(t *testing.T) {
 		})
 	}
 }
+
+func TestOpenCreatesWikiTables(t *testing.T) {
+	t.Parallel()
+
+	db := openTestDB(t)
+
+	tables := []string{
+		"wiki_sync_state",
+		"wiki_pages",
+		"wiki_revisions",
+		"wiki_page_edges",
+		"wiki_files",
+		"wiki_tombstones",
+		"wiki_fetch_log",
+	}
+
+	for _, table := range tables {
+		var name string
+		err := db.QueryRowContext(
+			context.Background(),
+			"SELECT name FROM sqlite_master WHERE type='table' AND name = ?",
+			table,
+		).Scan(&name)
+		if err != nil {
+			t.Fatalf("expected table %s to exist: %v", table, err)
+		}
+		if name != table {
+			t.Fatalf("found table name %q, want %q", name, table)
+		}
+	}
+}

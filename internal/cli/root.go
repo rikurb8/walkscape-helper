@@ -94,6 +94,10 @@ func NewRootCmd() *cobra.Command {
 	characterCmd.GroupID = "data"
 	root.AddCommand(characterCmd)
 
+	wikiCmd := newWikiCmd()
+	wikiCmd.GroupID = "data"
+	root.AddCommand(wikiCmd)
+
 	root.CompletionOptions.DisableDefaultCmd = true
 	completionCmd := newCompletionCmd(root)
 	completionCmd.GroupID = "tooling"

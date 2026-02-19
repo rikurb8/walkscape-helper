@@ -90,7 +90,85 @@ func migrate(ctx context.Context, db *sql.DB) error {
 			key TEXT PRIMARY KEY,
 			value TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS wiki_sync_state (
+			key TEXT PRIMARY KEY,
+			value TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS wiki_pages (
+			page_id INTEGER PRIMARY KEY,
+			namespace INTEGER NOT NULL,
+			title TEXT NOT NULL,
+			canonical_url TEXT,
+			is_redirect INTEGER NOT NULL DEFAULT 0,
+			latest_revision_id INTEGER,
+			latest_revision_sha1 TEXT,
+			latest_revision_ts TEXT,
+			lang_code TEXT,
+			source_snapshot_id TEXT,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_wiki_pages_namespace_title ON wiki_pages(namespace, title)`,
+		`CREATE TABLE IF NOT EXISTS wiki_revisions (
+			revision_id INTEGER PRIMARY KEY,
+			page_id INTEGER NOT NULL,
+			parent_revision_id INTEGER,
+			timestamp TEXT NOT NULL,
+			sha1 TEXT,
+			size INTEGER,
+			content_model TEXT,
+			wikitext TEXT,
+			comment TEXT,
+			updated_at TEXT NOT NULL,
+			FOREIGN KEY(page_id) REFERENCES wiki_pages(page_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_wiki_revisions_page_id ON wiki_revisions(page_id)`,
+		`CREATE TABLE IF NOT EXISTS wiki_page_edges (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			page_id INTEGER NOT NULL,
+			edge_type TEXT NOT NULL,
+			target TEXT NOT NULL,
+			source_snapshot_id TEXT,
+			updated_at TEXT NOT NULL,
+			FOREIGN KEY(page_id) REFERENCES wiki_pages(page_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_wiki_page_edges_page_type ON wiki_page_edges(page_id, edge_type)`,
+		`CREATE TABLE IF NOT EXISTS wiki_files (
+			file_page_id INTEGER PRIMARY KEY,
+			title TEXT NOT NULL,
+			mime TEXT,
+			size INTEGER,
+			url TEXT,
+			sha1 TEXT,
+			timestamp TEXT,
+			ext_metadata_json TEXT,
+			source_snapshot_id TEXT,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS wiki_tombstones (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			page_id INTEGER,
+			title TEXT,
+			event_type TEXT NOT NULL,
+			event_ts TEXT NOT NULL,
+			reason TEXT,
+			source_snapshot_id TEXT,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_wiki_tombstones_page_id ON wiki_tombstones(page_id)`,
+		`CREATE TABLE IF NOT EXISTS wiki_fetch_log (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			snapshot_id TEXT,
+			request_url TEXT NOT NULL,
+			http_status INTEGER NOT NULL,
+			response_body TEXT NOT NULL,
+			fetched_at TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_wiki_fetch_log_snapshot ON wiki_fetch_log(snapshot_id)`,
 		`INSERT OR IGNORE INTO app_meta (key, value) VALUES ('schema_version', '1')`,
+		`INSERT OR IGNORE INTO app_meta (key, value) VALUES ('wiki_last_full_snapshot_id', '')`,
+		`INSERT OR IGNORE INTO app_meta (key, value) VALUES ('wiki_recentchanges_cursor', '')`,
+		`INSERT OR IGNORE INTO app_meta (key, value) VALUES ('wiki_last_sync_ts', '')`,
 	}
 
 	for _, stmt := range stmts {
